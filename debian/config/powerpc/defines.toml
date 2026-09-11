@@ -1,0 +1,19 @@
+[[flavour]]
+name = 'powerpc'
+[flavour.description]
+hardware = '32-bit PowerPC'
+[flavour.packages]
+installer = true
+
+[[featureset]]
+name = 'none'
+
+[build]
+kernel_file = 'vmlinux'
+kernel_stem = 'vmlinux'
+
+[relations.image]
+suggests = [
+  'mkvmlinuz',
+  'grub-ieee1275',
+]

@@ -1,0 +1,20 @@
+[[flavour]]
+name = 'alpha-generic'
+[flavour.description]
+hardware = 'Alpha'
+hardware_long = 'DEC Alpha systems with extended kernel start address (Wildfire, Titan, Marvel)'
+[flavour.packages]
+installer = true
+
+[[featureset]]
+name = 'none'
+
+[build]
+kernel_file = 'arch/alpha/boot/vmlinux.gz'
+kernel_stem = 'vmlinuz'
+
+[relations.image]
+suggests = [
+  'aboot',
+  'fdutils',
+]

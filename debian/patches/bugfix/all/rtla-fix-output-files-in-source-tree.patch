@@ -1,0 +1,90 @@
+From: Ben Hutchings <benh@debian.org>
+Date: Sun, 24 May 2026 18:24:23 +0200
+Subject: rtla: Fix output files in source tree
+Bug-Debian: https://bugs.debian.org/1045765
+Forwarded: https://lore.kernel.org/linux-trace-kernel/ahMmN4PdsJzr_Va-@decadent.org.uk/
+
+Some output files (src/timerlat.bpf.o, src/timerlat.skel.h,
+example/timerlat_bpf_action.o, tests/bpf/bpf_action_map.o) are
+currently generated in the source tree, preventing a fully out-of-tree
+build.  To fix this:
+
+- Add $(OUTPUT) to their filenames in the relevant Makefile rules, and
+  create subdirectories as needed
+- Add $(OUTPUT)src to the include path
+- Add ${OUTPUT} to the BPF object filename in tests/timerlat.t
+
+Fixes: e34293ddcebd ("rtla/timerlat: Add BPF skeleton to collect samples")
+Fixes: 0304a3b7ec9a ("rtla/timerlat: Add example for BPF action program")
+Fixes: 5525aebd4e0c ("rtla/tests: Test BPF action program")
+Signed-off-by: Ben Hutchings <benh@debian.org>
+Reviewed-by: Ian Rogers <irogers@google.com>
+---
+ tools/tracing/rtla/Makefile         | 31 ++++++++++++++++++-----------
+ tools/tracing/rtla/tests/timerlat.t |  4 ++--
+ 2 files changed, 21 insertions(+), 14 deletions(-)
+
+--- a/tools/tracing/rtla/Makefile
++++ b/tools/tracing/rtla/Makefile
+@@ -95,25 +95,30 @@
+ export CFLAGS OUTPUT srctree
+ 
+ ifeq ($(BUILD_BPF_SKEL),1)
+-src/timerlat.bpf.o: src/timerlat.bpf.c
++$(OUTPUT)src/timerlat.bpf.o: src/timerlat.bpf.c
++	mkdir -p $(@D)
+ 	$(QUIET_CLANG)$(CLANG) -g -O2 -target bpf -c $(filter %.c,$^) -o $@
+ 
+-src/timerlat.skel.h: src/timerlat.bpf.o
++$(OUTPUT)src/timerlat.skel.h: $(OUTPUT)src/timerlat.bpf.o
++	mkdir -p $(@D)
+ 	$(QUIET_GENSKEL)$(SYSTEM_BPFTOOL) gen skeleton $< > $@
+ 
+-example/timerlat_bpf_action.o: example/timerlat_bpf_action.c
++$(OUTPUT)example/timerlat_bpf_action.o: example/timerlat_bpf_action.c
++	mkdir -p $(@D)
+ 	$(QUIET_CLANG)$(CLANG) -g -O2 -target bpf -c $(filter %.c,$^) -o $@
+ 
+-tests/bpf/bpf_action_map.o: tests/bpf/bpf_action_map.c
++$(OUTPUT)tests/bpf/bpf_action_map.o: tests/bpf/bpf_action_map.c
++	mkdir -p $(@D)
+ 	$(QUIET_CLANG)$(CLANG) -g -O2 -target bpf -c $(filter %.c,$^) -o $@
+ else
+-src/timerlat.skel.h:
+-	$(Q)echo '/* BPF skeleton is disabled */' > src/timerlat.skel.h
++$(OUTPUT)src/timerlat.skel.h:
++	mkdir -p $(@D)
++	$(Q)echo '/* BPF skeleton is disabled */' > $@
+ 
+-example/timerlat_bpf_action.o: example/timerlat_bpf_action.c
++$(OUTPUT)example/timerlat_bpf_action.o: example/timerlat_bpf_action.c
+ 	$(Q)echo "BPF skeleton support is disabled, skipping example/timerlat_bpf_action.o"
+ 
+-tests/bpf/bpf_action_map.o: tests/bpf/bpf_action_map.c
++$(OUTPUT)tests/bpf/bpf_action_map.o: tests/bpf/bpf_action_map.c
+ 	$(Q)echo "BPF skeleton support is disabled, skipping tests/bpf/bpf_action_map.o"
+ endif
+ 
+@@ -127,7 +132,7 @@
+ rtla.%: fixdep FORCE
+ 	make -f $(srctree)/tools/build/Makefile.build dir=. $@
+ 
+-$(RTLA_IN): fixdep FORCE src/timerlat.skel.h $(LIBSUBCMD_INCLUDES)
++$(RTLA_IN): fixdep FORCE $(OUTPUT)src/timerlat.skel.h $(LIBSUBCMD_INCLUDES)
+ 	make $(build)=rtla
+ 
+ $(LIBSUBCMD_OUTPUT):
+@@ -163,10 +168,10 @@
+ 	$(Q)find . -name '*.o' -delete -o -name '\.*.cmd' -delete -o -name '\.*.d' -delete
+ 	$(Q)rm -f rtla rtla-static fixdep FEATURE-DUMP rtla-*
+ 	$(Q)rm -rf feature
+-	$(Q)rm -f src/timerlat.bpf.o src/timerlat.skel.h example/timerlat_bpf_action.o
++	$(Q)rm -f $(OUTPUT)src/timerlat.bpf.o $(OUTPUT)src/timerlat.skel.h $(OUTPUT)example/timerlat_bpf_action.o
+ 	$(Q)rm -f $(UNIT_TESTS)
+ 
+-check: $(RTLA) tests/bpf/bpf_action_map.o
++check: $(RTLA) $(OUTPUT)tests/bpf/bpf_action_map.o
+ 	RTLA=$(RTLA) BPFTOOL=$(SYSTEM_BPFTOOL) prove -o -f -v tests/
+-examples: example/timerlat_bpf_action.o
++examples: $(OUTPUT)example/timerlat_bpf_action.o
+ .PHONY: FORCE clean check

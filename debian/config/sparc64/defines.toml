@@ -1,0 +1,19 @@
+[[flavour]]
+name = 'sparc64'
+[flavour.description]
+hardware = '64-bit UltraSPARC'
+[flavour.packages]
+installer = true
+
+[[featureset]]
+name = 'none'
+
+[build]
+kernel_file = 'vmlinux'
+kernel_stem = 'vmlinux'
+
+[relations.image]
+suggests = [
+  'fdutils',
+  'grub-ieee1275',
+]
