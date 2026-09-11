@@ -38,6 +38,9 @@ jobs:
           # LOCALVERSION_AUTO 以首次定义为准，片段中的禁用不生效，强制关闭
           ./scripts/config --disable LOCALVERSION_AUTO
           make olddefconfig
+          # Debian gitignore 补丁(/* 规则)会把构建产物视为未跟踪文件，
+          # 导致 setlocalversion 给版本号追加 "+"，这里把所有未跟踪文件排除
+          printf '*\n' >> .git/info/exclude
           echo "--- sanity check key options ---"
           for opt in CONFIG_LOCALVERSION CONFIG_VT CONFIG_KEYBOARD_ATKBD CONFIG_USB_HID CONFIG_SERIAL_8250_CONSOLE CONFIG_DEVTMPFS; do
             grep -q "^${opt}=" .config || { echo "ERROR: ${opt} missing"; exit 1; }
@@ -63,7 +66,9 @@ jobs:
           cd "busybox-${BUSYBOX_VER}"
           make defconfig
           sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
-          make olddefconfig
+          # busybox 1.36.1 的老 kconfig 没有 olddefconfig 目标，
+          # 用 oldconfig + 空回答（取默认值）非交互式完成
+          yes "" | make oldconfig
           grep -q '^CONFIG_STATIC=y' .config || { echo "ERROR: static not enabled"; exit 1; }
           make -j"$(nproc)"
           file busybox | grep -i 'statically linked' || { echo "ERROR: busybox not static"; exit 1; }
