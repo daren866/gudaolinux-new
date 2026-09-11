@@ -1,0 +1,144 @@
+name: Build Gudao Linux ISO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/**'
+      - 'gudao/**'
+      - 'include/linux/uts.h'
+      - 'init/version-timestamp.c'
+      - 'Kconfig'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'gudao/**'
+      - '.github/workflows/**'
+
+concurrency:
+  group: build-gudao-iso
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Gudao Linux kernel + BusyBox + GRUB ISO
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Gudao Linux source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex libssl-dev libelf-dev dwarves \
+            cpio gzip wget qemu-system-x86 \
+            grub-pc-bin grub-efi-amd64-bin xorriso mtools
+
+      - name: Verify Gudao branding
+        run: |
+          echo "==> uname sysname:"
+          grep 'UTS_SYSNAME' include/linux/uts.h
+          echo "==> boot banner:"
+          grep -n 'version ' init/version-timestamp.c | head -2
+          echo "==> menuconfig title:"
+          grep 'mainmenu' Kconfig
+
+      - name: Configure kernel (defconfig + Gudao fragment)
+        run: |
+          make defconfig
+          scripts/kconfig/merge_config.sh -m .config gudao/gudao-kernel.config
+          make olddefconfig
+          echo "==> key config check:"
+          grep -E 'CONFIG_(LOCALVERSION=|KEYBOARD_ATKBD=|SERIO_I8042=|VT=|BLK_DEV_INITRD=|DEVTMPFS=|SERIAL_8250_CONSOLE=)' .config
+
+      - name: Build kernel (bzImage)
+        run: |
+          make -j"$(nproc)" bzImage
+          cp arch/x86/boot/bzImage vmlinuz-gudao
+          file vmlinuz-gudao
+
+      - name: Build BusyBox (static)
+        run: |
+          wget -q https://busybox.net/downloads/busybox-1.36.1.tar.bz2
+          tar xf busybox-1.36.1.tar.bz2
+          cd busybox-1.36.1
+          make defconfig
+          sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+          # tc applet breaks with kernel headers >= 6.8 (struct tc_cbq_wrropt removed)
+          sed -i 's/^CONFIG_TC=y/# CONFIG_TC is not set/' .config
+          make -j"$(nproc)" || {
+            echo "busybox source build failed - falling back to distro busybox-static"
+            cd ..
+            sudo apt-get install -y busybox-static
+            cp /bin/busybox busybox-1.36.1/busybox
+          }
+          file busybox-1.36.1/busybox
+
+      - name: Build initramfs
+        run: bash gudao/build-initramfs.sh
+
+      - name: Build ISO (GRUB)
+        run: bash gudao/build-iso.sh
+
+      - name: Boot test (QEMU headless)
+        run: |
+          ISO=$(ls gudao-linux-*.iso)
+          set +e
+          timeout 240 qemu-system-x86_64 -m 512M -cdrom "$ISO" -nographic -no-reboot > boot.log 2>&1
+          RC=$?
+          set -e
+          echo "qemu exit code: $RC (124 = killed by timeout, expected)"
+          if grep -q "Welcome to Gudao Linux" boot.log; then
+            echo "============================================"
+            echo " BOOT TEST PASSED - Gudao Linux is alive!"
+            echo "============================================"
+            grep -m1 "Gudao Linux version" boot.log || true
+            tail -15 boot.log
+          else
+            echo " BOOT TEST FAILED - last 60 lines of boot.log:"
+            tail -60 boot.log
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gudao-linux-iso
+          if-no-files-found: error
+          path: |
+            gudao-linux-*.iso
+            vmlinuz-gudao
+            initramfs-gudao.img
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          KVER="$(make -s kernelversion)"
+          TAG="gudao-${KVER}-r${GITHUB_RUN_NUMBER}"
+          TITLE="Gudao Linux ${KVER} (build #${GITHUB_RUN_NUMBER})"
+          NOTES="Gudao Linux ${KVER} - auto-built bootable ISO.
+
+          - Bootloader: GRUB 2 (BIOS + UEFI hybrid)
+          - Userland: BusyBox shell (live in RAM)
+          - Keyboard: AT/PS2 (i8042) + USB HID built-in
+          - Boot test: passed headless in QEMU
+
+          How to use:
+          1. Download gudao-linux-${KVER}.iso
+          2. Burn to CD/USB or attach to a VM as CD-ROM
+          3. Pick 'Gudao Linux' in the GRUB menu and enjoy the shell!"
+          gh release create "$TAG" \
+            "gudao-linux-${KVER}.iso" \
+            vmlinuz-gudao \
+            initramfs-gudao.img \
+            --title "$TITLE" \
+            --notes "$NOTES"
+          echo ">>> Release published: $TAG"
