@@ -66,10 +66,13 @@ jobs:
           cd "busybox-${BUSYBOX_VER}"
           make defconfig
           sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+          # busybox 1.36.1 的 tc applet 与新内核头文件(6.8+/glibc 2.36+)不兼容，禁用之
+          sed -i 's/^CONFIG_TC=y/# CONFIG_TC is not set/' .config
           # busybox 1.36.1 的老 kconfig 没有 olddefconfig 目标，
           # 用 oldconfig + 空回答（取默认值）非交互式完成
           yes "" | make oldconfig
           grep -q '^CONFIG_STATIC=y' .config || { echo "ERROR: static not enabled"; exit 1; }
+          grep -q '^# CONFIG_TC is not set' .config || { echo "ERROR: TC not disabled"; exit 1; }
           make -j"$(nproc)"
           file busybox | grep -i 'statically linked' || { echo "ERROR: busybox not static"; exit 1; }
           ./busybox echo "busybox works"
