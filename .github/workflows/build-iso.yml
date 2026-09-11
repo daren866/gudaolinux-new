@@ -1,0 +1,159 @@
+name: Build Gudao Linux ISO
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUSYBOX_VER: 1_36_1
+
+jobs:
+  build:
+    name: Build kernel, initramfs and ISO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Gudao Linux kernel source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libelf-dev libssl-dev cpio \
+            xorriso grub-pc-bin grub-efi-amd64-bin mtools \
+            qemu-system-x86
+
+      - name: Configure kernel (x86_64_defconfig + Gudao fragment)
+        run: |
+          make x86_64_defconfig
+          ./scripts/kconfig/merge_config.sh -m .config gudao/kernel-fragment.config
+          make olddefconfig
+          # LOCALVERSION_AUTO 以首次定义为准，片段中的禁用不生效，强制关闭
+          ./scripts/config --disable LOCALVERSION_AUTO
+          make olddefconfig
+          echo "--- sanity check key options ---"
+          for opt in CONFIG_LOCALVERSION CONFIG_VT CONFIG_KEYBOARD_ATKBD CONFIG_USB_HID CONFIG_SERIAL_8250_CONSOLE CONFIG_DEVTMPFS; do
+            grep -q "^${opt}=" .config || { echo "ERROR: ${opt} missing"; exit 1; }
+          done
+          grep -q 'CONFIG_LOCALVERSION="-gudao"' .config || { echo "ERROR: LOCALVERSION wrong"; exit 1; }
+          grep -q '^# CONFIG_LOCALVERSION_AUTO is not set' .config || { echo "ERROR: LOCALVERSION_AUTO still enabled"; exit 1; }
+          echo "OK"
+
+      - name: Build kernel (bzImage)
+        run: |
+          make -j"$(nproc)" bzImage
+          KREL=$(make -s kernelrelease)
+          KVER=$(make -s kernelversion)
+          echo "KREL=${KREL}" >> "$GITHUB_ENV"
+          echo "KVER=${KVER}" >> "$GITHUB_ENV"
+          echo "--- built kernel: ${KREL} ---"
+          ls -lh arch/x86/boot/bzImage
+
+      - name: Build BusyBox (fully static)
+        run: |
+          curl -fL "https://github.com/mirror/busybox/archive/refs/tags/${BUSYBOX_VER}.tar.gz" -o busybox.tar.gz
+          tar xf busybox.tar.gz
+          cd "busybox-${BUSYBOX_VER}"
+          make defconfig
+          sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+          make olddefconfig
+          grep -q '^CONFIG_STATIC=y' .config || { echo "ERROR: static not enabled"; exit 1; }
+          make -j"$(nproc)"
+          file busybox | grep -i 'statically linked' || { echo "ERROR: busybox not static"; exit 1; }
+          ./busybox echo "busybox works"
+
+      - name: Assemble initramfs
+        run: |
+          ROOTFS="$(mktemp -d)/rootfs"
+          mkdir -p "$ROOTFS"/{bin,dev,etc,proc,sys,tmp,mnt,root}
+          install -m 0755 "busybox-${BUSYBOX_VER}/busybox" "$ROOTFS/bin/busybox"
+          ln -s busybox "$ROOTFS/bin/sh"
+          install -m 0755 gudao/initramfs/init "$ROOTFS/init"
+          install -m 0644 gudao/initramfs/gudao-banner "$ROOTFS/etc/gudao-banner"
+          install -m 0644 gudao/initramfs/passwd "$ROOTFS/etc/passwd"
+          install -m 0644 gudao/initramfs/group "$ROOTFS/etc/group"
+          # static device nodes so the kernel can open the console before devtmpfs
+          sudo mknod -m 600 "$ROOTFS/dev/console" c 5 1
+          sudo mknod -m 666 "$ROOTFS/dev/null" c 1 3
+          ( cd "$ROOTFS" && find . -print0 | cpio --null -o -H newc --owner 0:0 | gzip -9 ) \
+            > initramfs-gudao.img
+          ls -lh initramfs-gudao.img
+
+      - name: QEMU boot smoke test (serial console)
+        timeout-minutes: 5
+        run: |
+          timeout 90 qemu-system-x86_64 -m 512M -no-reboot -nographic \
+            -kernel arch/x86/boot/bzImage -initrd initramfs-gudao.img \
+            -append "console=ttyS0 panic=-1" > boot.log 2>&1 || true
+          echo "--- boot log tail ---"
+          tail -20 boot.log
+          grep -q "Gudao Linux" boot.log || { echo "ERROR: banner not seen"; exit 1; }
+          grep -q "BusyBox userland" boot.log || { echo "ERROR: init did not reach shell"; exit 1; }
+          echo "SMOKE TEST PASSED"
+
+      - name: Build GRUB ISO (BIOS + UEFI hybrid)
+        run: |
+          ISODIR=$(mktemp -d)
+          mkdir -p "$ISODIR/boot/grub"
+          install -m 0644 arch/x86/boot/bzImage "$ISODIR/boot/vmlinuz-gudao"
+          install -m 0644 initramfs-gudao.img "$ISODIR/boot/initramfs-gudao.img"
+          install -m 0644 gudao/grub/grub.cfg "$ISODIR/boot/grub/grub.cfg"
+          ISO="GudaoLinux-${KVER}-x86_64.iso"
+          grub-mkrescue -o "$ISO" "$ISODIR" 2>&1 | tail -3
+          ls -lh "$ISO"
+          echo "ISO=${ISO}" >> "$GITHUB_ENV"
+          sha256sum "$ISO" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ISO }}
+          path: |
+            ${{ env.ISO }}
+            SHA256SUMS.txt
+
+      - name: Determine release tag
+        id: rtag
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="auto-$(date +%Y%m%d)-build${GITHUB_RUN_NUMBER}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rtag.outputs.tag }}
+        run: |
+          cat > release-notes.md << EOF
+          ## Gudao Linux ${TAG}
+
+          - Kernel: Linux ${KREL} (Gudao Linux)
+          - Userland: BusyBox ${BUSYBOX_VER//_/\.} (fully static)
+          - Bootloader: GRUB 2 (BIOS + UEFI hybrid ISO)
+          - Console: VGA + basic keyboard (PS/2 atkbd / USB hid)
+
+          ### sha256
+          \`\`\`
+          $(cat SHA256SUMS.txt)
+          \`\`\`
+
+          ### Boot test in QEMU
+          \`\`\`
+          qemu-system-x86_64 -m 512M -cdrom ${ISO}
+          \`\`\`
+          EOF
+          gh release create "$TAG" \
+            --title "Gudao Linux ${TAG}" \
+            --notes-file release-notes.md \
+            "$ISO" SHA256SUMS.txt

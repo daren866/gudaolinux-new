@@ -1,0 +1,4 @@
+# 本地实验产物不进 git（CI 会现场构建全新 initramfs）
+initramfs-root/
+*.img
+*.iso

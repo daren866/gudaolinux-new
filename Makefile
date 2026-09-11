@@ -3,7 +3,7 @@ VERSION = 7
 PATCHLEVEL = 2
 SUBLEVEL = 4
 EXTRAVERSION =
-NAME = Baby Opossum Posse
+NAME = Gudao Linux
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

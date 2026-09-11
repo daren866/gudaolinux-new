@@ -1,0 +1,44 @@
+#!/bin/sh
+# =====================================================
+# Gudao Linux initramfs init (BusyBox userland)
+# Terminal : busybox ash
+# Keyboard : PS/2 (i8042/atkbd) + USB HID (kernel built-in)
+# =====================================================
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/root
+export TERM=linux
+
+# --- mount pseudo filesystems (busybox called explicitly:
+#     applet symlinks are not installed yet) -----------------
+/bin/busybox mount -t proc proc /proc
+/bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox mount -t devtmpfs devtmpfs /dev
+/bin/busybox mkdir -p /dev/pts /tmp /mnt /root
+/bin/busybox mount -t devpts devpts /dev/pts
+
+# --- install all busybox applets as /bin symlinks -----------
+/bin/busybox --install -s /bin
+
+hostname gudao
+
+# --- boot banner ---------------------------------------------
+clear 2>/dev/null || /bin/busybox clear
+cat /etc/gudao-banner
+echo ""
+echo "  Welcome to Gudao Linux"
+echo "  Kernel : $(uname -r)      Machine : $(uname -m)"
+echo "  Shell  : busybox ash  (type 'help' to list all applets)"
+echo "  System : live in RAM - nothing persists across reboot"
+echo ""
+echo "  BusyBox userland ready"
+echo ""
+
+# --- interactive shell on the console ------------------------
+# setsid + cttyhack: attach /dev/console as controlling tty
+while true; do
+    setsid cttyhack sh
+    echo ""
+    echo "  [init] shell exited, restarting in 3s..."
+    sleep 3
+done
