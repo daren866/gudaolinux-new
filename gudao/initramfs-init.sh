@@ -40,9 +40,16 @@ if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
         --exclude=etc/hostname \
         --exclude=etc/passwd \
         --exclude=etc/group \
-        --exclude=etc/gudao-banner 2>/dev/null || true
+        --exclude=etc/gudao-banner \
+        || echo "gudao: WARNING - tar reported errors unpacking the apt pack"
     rm -f /opt/apt-pack.tar.gz   # free the RAM occupied by the archive
-    echo "gudao: apt ready (sources: TUNA trixie + security.debian.org)"
+    # verify reality instead of assuming success: a silent partial unpack
+    # used to masquerade as "apt ready" here
+    if [ -x /usr/bin/apt-get ]; then
+        echo "gudao: apt ready (sources: TUNA trixie + security.debian.org)"
+    else
+        echo "gudao: ERROR - /usr/bin/apt-get missing after unpack, apt unavailable"
+    fi
 fi
 
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------

@@ -30,6 +30,17 @@ PKGS=(
   # HTTPS transport certificates (only a Recommends of apt - without
   # it every https:// mirror fails TLS verification)
   ca-certificates
+  # ldconfig - libc6 postinst calls it when dpkg unpacks/updates libc6
+  # at runtime (e.g. `apt install ed` pulls libc6 because our dpkg status
+  # starts empty); without libc-bin the postinst fails and apt reports
+  # an install error
+  libc-bin
+  # maintainer-script helpers: deb-systemd-helper/invoke (postinst of
+  # daemon packages call them unconditionally; combined with our
+  # /usr/bin/systemctl stub and policy-rc.d they become harmless no-ops)
+  init-system-helpers
+  # start-stop-daemon for sysv-style maintainer scripts
+  sysvinit-utils
 )
 
 echo ">>> preparing isolated apt environment (Debian trixie, download only)"
@@ -69,6 +80,23 @@ rm -rf "$ROOT"/usr/share/doc "$ROOT"/usr/share/man "$ROOT"/usr/share/locale \
        "$ROOT"/usr/include "$ROOT"/usr/lib/pkgconfig "$ROOT"/usr/share/pkgconfig
 find "$ROOT" -name '*.a' -print0 | xargs -0 -r rm -f
 find "$ROOT" -name '*.la' -print0 | xargs -0 -r rm -f
+
+echo ">>> creating usrmerge root symlinks"
+# On a real Debian system base-files ships /bin /lib /lib64 /sbin ->
+# usr/... top-level symlinks. The apt dependency closure does NOT pull
+# base-files, so we must create the critical one ourselves: every ELF
+# binary below has PT_INTERP=/lib64/ld-linux-x86-64.so.2, and without
+# the /lib64 symlink execve() returns ENOENT - the shell reports
+# "apt-get: not found" even though /usr/bin/apt-get is right there.
+# (The desktop pack gets these for free via its base-files dependency,
+# which is why the desktop worked while apt did not.)
+ln -sfn usr/lib64 "$ROOT/lib64"
+test -L "$ROOT/lib64"
+# /lib and the loader chain: /lib64 -> usr/lib64 (dir shipped by libc6),
+# whose ld-linux symlink points back to ../lib/x86_64-linux-gnu/ - that
+# resolves inside the pack without touching the root /lib
+test -f "$ROOT/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" \
+  || { echo "FAIL: dynamic loader missing from the closure"; exit 1; }
 
 echo ">>> shipping Gudao apt sources (TUNA trixie, traditional format)"
 mkdir -p "$ROOT/etc/apt"
@@ -156,6 +184,10 @@ test -f "$ROOT/usr/bin/dpkg-deb" || { echo "FAIL: dpkg-deb missing"; exit 1; }
 test -f "$ROOT/usr/bin/gpgv"     || { echo "FAIL: gpgv missing";     exit 1; }
 test -f "$ROOT/usr/lib/apt/methods/https" \
   || { echo "FAIL: apt https method missing (https mirrors will not work!)"; exit 1; }
+test -L "$ROOT/lib64" \
+  || { echo "FAIL: /lib64 usrmerge symlink missing (every dynamic binary would die ENOENT!)"; exit 1; }
+test -f "$ROOT/usr/sbin/ldconfig" \
+  || { echo "FAIL: ldconfig missing (libc6 postinst will fail on runtime installs)"; exit 1; }
 test -f "$ROOT/usr/share/keyrings/debian-archive-keyring.gpg" \
   || { echo "FAIL: debian archive keyring missing (apt update will fail signature check!)"; exit 1; }
 test -s "$ROOT/etc/ssl/certs/ca-certificates.crt" \
