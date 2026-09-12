@@ -87,7 +87,8 @@ export GALLIUM_DRIVER=llvmpipe
 export NO_AT_BRIDGE=1                 # no accessibility bus in the live system
 export DISPLAY=:0
 
-# 4. Xorg on vt1 (fbdev/modesetting kernel driver + Mesa GLX)
+# 4. Xorg on vt1 (modesetting on a DRM card; fbdev/vesa fallback + Mesa GLX)
+echo "desktop: graphics devices: /dev/dri=[$(ls /dev/dri 2>/dev/null | tr '\n' ' ')] fb=[$(ls /dev/fb* 2>/dev/null | tr '\n' ' ')]"
 echo "desktop: starting Xorg (Mesa CPU rendering)..."
 Xorg :0 -nolisten tcp -keeptty vt1 >/var/log/xorg-start.log 2>&1 &
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
@@ -98,6 +99,10 @@ done
 if [ ! -S /tmp/.X11-unix/X0 ]; then
     echo "desktop: Xorg did not come up, log tail:"
     tail -20 /var/log/Xorg.0.log 2>/dev/null || tail -20 /var/log/xorg-start.log
+    echo "desktop: diagnose /dev/dri:  $(ls /dev/dri 2>/dev/null || echo '(none)')"
+    echo "desktop: diagnose /dev/fb*:  $(ls /dev/fb* 2>/dev/null || echo '(none)')"
+    echo "desktop: diagnose kernel drm/fb messages:"
+    dmesg 2>/dev/null | grep -iE 'drm|framebuffer|simple-frame|vesa|vbe|bochs|qxl|vmwgfx|vbox|virtio.gpu' | tail -12 || true
     exit 1
 fi
 
