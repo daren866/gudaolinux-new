@@ -250,7 +250,7 @@ jobs:
           - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
           - Keyboard/mouse: PS/2, USB HID, VMware vmmouse; libinput under X
           - Fixed: devpts now mounted at boot - xfce4-terminal could not
-            open a PTY before ("Failed to open PTY: No such file or directory")
+            open a PTY before ('Failed to open PTY: No such file or directory')
           - GPU drivers built-in: QEMU (bochs/cirrus/qxl/virtio), VMware (vmwgfx),
             VirtualBox (vboxvideo + VMSVGA), plus a VESA/EFI framebuffer fallback
             (simpledrm) so the desktop also works with any other virtual GPU
