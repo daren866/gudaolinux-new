@@ -17,13 +17,103 @@ fi
 echo ">>> using busybox: $BB"
 
 rm -rf "$ROOT"
-mkdir -p "$ROOT"/{bin,sbin,etc,proc,sys,dev,tmp,mnt,root,run,usr/bin,usr/sbin}
+mkdir -p "$ROOT"/{bin,sbin,etc,proc,sys,dev,tmp,mnt,root,run,usr/bin,usr/sbin,opt,var/log,var/lib/dbus,var/lib/xkb,var/cache}
 
 cp "$BB" "$ROOT/bin/busybox"
 chmod 755 "$ROOT/bin/busybox"
 
 cp "$GUDAO_DIR/initramfs-init.sh" "$ROOT/init"
 chmod 755 "$ROOT/init"
+
+# ---- the `desktop` command (Xorg + Mesa CPU rendering + xfwm4 stack) ----
+# The heavy desktop payload lives in /opt/desktop-pack.tar.gz (embedded below);
+# this launcher unpacks it on first use and brings the stack up in order:
+#   Xorg (Mesa llvmpipe) -> xfwm4 -> xfce4-panel -> pcmanfm --desktop -> lxterminal
+cat > "$ROOT/usr/bin/desktop" <<'EOF'
+#!/bin/sh
+# ------------------------------------------------------------
+# Gudao Linux desktop launcher
+#   desktop   -> Xorg (Mesa CPU rendering) + xfwm4 + xfce4-panel
+#                + pcmanfm desktop + lxterminal
+# ------------------------------------------------------------
+PACK=/opt/desktop-pack.tar.gz
+
+# 1. unpack the desktop pack on first use
+if [ ! -x /usr/bin/xfwm4 ]; then
+    if [ ! -f "$PACK" ]; then
+        echo "desktop: $PACK not found (this build has no desktop pack)"
+        exit 1
+    fi
+    echo "desktop: unpacking desktop pack (first run only, please wait)..."
+    tar xzf "$PACK" -C / \
+        --exclude=etc/resolv.conf \
+        --exclude=etc/hosts \
+        --exclude=etc/hostname \
+        --exclude=etc/passwd \
+        --exclude=etc/group \
+        --exclude=etc/gudao-banner \
+        || { echo "desktop: unpack failed"; exit 1; }
+    rm -f "$PACK"   # free the RAM occupied by the archive
+    echo "desktop: pack unpacked."
+fi
+
+# 2. udev (libinput needs the udev database to find mice/keyboards)
+if [ ! -d /run/udev/data ]; then
+    mkdir -p /run/udev
+    UDEVD=/usr/lib/systemd/systemd-udevd
+    [ -x "$UDEVD" ] || UDEVD=/lib/udev/udevd
+    "$UDEVD" --daemon >/dev/null 2>&1 || true
+    udevadm trigger --action=add >/dev/null 2>&1 || true
+    udevadm settle >/dev/null 2>&1 || true
+fi
+
+# 3. runtime dirs + dbus + Mesa CPU rendering (llvmpipe)
+mkdir -p /tmp/.X11-unix /var/log /var/lib/dbus /root/.config
+chmod 1777 /tmp/.X11-unix
+dbus-uuidgen --ensure >/dev/null 2>&1 || true
+eval "$(dbus-launch --sh-syntax 2>/dev/null)"
+export LIBGL_ALWAYS_SOFTWARE=1        # force Mesa software rendering (llvmpipe)
+export GALLIUM_DRIVER=llvmpipe
+export DISPLAY=:0
+
+# 4. Xorg on vt1 (fbdev/modesetting kernel driver + Mesa GLX)
+echo "desktop: starting Xorg (Mesa CPU rendering)..."
+Xorg :0 -nolisten tcp -keeptty vt1 >/var/log/xorg-start.log 2>&1 &
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
+         21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40; do
+    [ -S /tmp/.X11-unix/X0 ] && break
+    sleep 1
+done
+if [ ! -S /tmp/.X11-unix/X0 ]; then
+    echo "desktop: Xorg did not come up, log tail:"
+    tail -20 /var/log/Xorg.0.log 2>/dev/null || tail -20 /var/log/xorg-start.log
+    exit 1
+fi
+
+# 5. window manager first, then the rest
+echo "desktop: loading xfwm4 (window manager)..."
+xfwm4 --compositor=off &
+echo "desktop: loading xfce4-panel..."
+xfce4-panel &
+echo "desktop: loading pcmanfm (desktop background)..."
+pcmanfm --desktop &
+echo "desktop: loading lxterminal..."
+lxterminal &
+
+echo
+echo "  Desktop is up: Xorg (Mesa llvmpipe) + xfwm4 + xfce4-panel + pcmanfm + lxterminal"
+echo "  Look at the GUI display of your VM / machine (vt1)."
+echo
+EOF
+chmod 755 "$ROOT/usr/bin/desktop"
+
+# ---- embed the desktop pack if it has been built ----
+if [ -f "$TOP_DIR/desktop-pack.tar.gz" ]; then
+    echo ">>> embedding desktop pack into initramfs /opt/"
+    cp "$TOP_DIR/desktop-pack.tar.gz" "$ROOT/opt/desktop-pack.tar.gz"
+else
+    echo ">>> no desktop-pack.tar.gz found, building base-only initramfs"
+fi
 
 cat > "$ROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh

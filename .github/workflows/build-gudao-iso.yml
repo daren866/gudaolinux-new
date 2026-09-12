@@ -92,6 +92,9 @@ jobs:
           ./busybox calc '2*(2+2)'
           ./busybox about
 
+      - name: Build Gudao desktop pack (Xorg + XFCE + LXDE from Debian trixie)
+        run: bash gudao/build-desktop-pack.sh
+
       - name: Build initramfs
         run: bash gudao/build-initramfs.sh
 
@@ -105,8 +108,9 @@ jobs:
         run: |
           # NOTE: the ISO's default GRUB entry is now quiet display-only (no serial
           # output), so we verify the console=ttyS0 boot path by direct kernel boot.
+          # -m 2048: the initramfs now embeds the ~150MB desktop pack.
           set +e
-          timeout 240 qemu-system-x86_64 -m 512M -nographic -no-reboot \
+          timeout 240 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
             -kernel vmlinuz-gudao \
             -initrd initramfs-gudao.img \
             -append "console=ttyS0 panic=-1" \
@@ -129,7 +133,7 @@ jobs:
       - name: Self-test calc / about / network (QEMU)
         run: |
           set +e
-          timeout 180 qemu-system-x86_64 -m 512M -nographic -no-reboot \
+          timeout 180 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
             -kernel vmlinuz-gudao \
             -initrd initramfs-gudao.img \
             -device e1000,netdev=net0 -netdev user,id=net0 \
@@ -155,6 +159,31 @@ jobs:
             exit 1
           fi
 
+      - name: Desktop test (QEMU, Xorg + xfwm4 + panel + pcmanfm + lxterminal)
+        run: |
+          # Boots with gudao_desktoptest: unpacks the desktop pack, starts
+          # Xorg (Mesa llvmpipe CPU rendering), xfwm4, xfce4-panel, pcmanfm
+          # and lxterminal, verifies all processes + glxinfo, powers off.
+          set +e
+          timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
+            -kernel vmlinuz-gudao \
+            -initrd initramfs-gudao.img \
+            -device e1000,netdev=net0 -netdev user,id=net0 \
+            -append "console=ttyS0 gudao_desktoptest panic=-1" \
+            </dev/null > desktop.log 2>&1
+          RC=$?
+          set -e
+          echo "qemu exit code: $RC"
+          tail -70 desktop.log
+          if grep -q "DESKTOP PASS" desktop.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop.log; then
+            echo "=============================================="
+            echo " DESKTOP TEST PASSED - Gudao GUI is alive!"
+            echo "=============================================="
+          else
+            echo " DESKTOP TEST FAILED"
+            exit 1
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -176,22 +205,28 @@ jobs:
 
           - Bootloader: GRUB 2 (BIOS + UEFI hybrid), quiet display-only boot by default
           - Userland: BusyBox shell with Gudao applets (live in RAM)
-          - Built-in commands: calc <expr> (math calculator), about (system info)
+          - Built-in commands: calc <expr>, about, desktop (start the GUI)
+          - Desktop: type 'desktop' -> Xorg (Mesa llvmpipe CPU rendering)
+            + xfwm4 + xfce4-panel + pcmanfm desktop + lxterminal
           - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
-          - Keyboard: AT/PS2 (i8042) + USB HID built-in
-          - Boot test: passed headless in QEMU (incl. calc/about/network selftest)
+          - Keyboard/mouse: PS/2, USB HID, VMware vmmouse; libinput under X
+          - GPU drivers built-in: QEMU (bochs/cirrus/virtio), VMware (vmwgfx), VirtualBox (vboxvideo)
+          - RAM advice: 2 GB minimum (the whole system incl. the desktop lives in RAM)
+          - Boot test: passed headless in QEMU (incl. calc/about/network/desktop selftest)
 
           How to use:
           1. Download gudao-linux-${KVER}.iso
-          2. Burn to CD/USB or attach to a VM as CD-ROM
-          3. Default boots silently (no kernel log). For kernel log,
-             pick a 'with kernel log' entry in the GRUB menu.
-          4. Network comes up automatically via DHCP (QEMU/VirtualBox work
-             out of the box); DNS resolver is set to 8.8.8.8.
+          2. Burn to CD/USB or attach to a VM as CD-ROM (2 GB RAM recommended)
+          3. Default boots silently (no kernel log) into the busybox shell.
+             For kernel log, pick a 'with kernel log' entry in the GRUB menu.
+          4. Type 'desktop' to start the X desktop (first run unpacks the
+             desktop pack, ~1 minute; look at your VM's GUI display, vt1).
+          5. Network comes up automatically via DHCP; DNS resolver is 8.8.8.8.
 
           Try in the shell:
             calc 2*(2+2)     -> 8
             about            -> system / kernel / ram / cpu info
+            desktop          -> Xorg + xfwm4 + xfce4-panel + pcmanfm + lxterminal
             ifconfig         -> see the DHCP-assigned address
             cat /etc/resolv.conf  -> nameserver 8.8.8.8"
           gh release create "$TAG" \

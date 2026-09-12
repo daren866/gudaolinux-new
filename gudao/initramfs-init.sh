@@ -14,10 +14,12 @@ export TERM=linux
 # keep the console quiet at runtime too (only KERN_ERR and worse)
 dmesg -n 3 2>/dev/null || true
 
-mkdir -p /proc /sys /dev /tmp /mnt /root
+mkdir -p /proc /sys /dev /tmp /mnt /root /run /opt /var/log /var/lib/dbus /var/lib/xkb /var/cache
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || mdev -s
+# /dev/shm: POSIX shared memory, needed by X11 (MIT-SHM) and GTK
+mount -t tmpfs -o mode=1777 shm /dev/shm 2>/dev/null || true
 
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------
 # The e1000/e1000e driver is built into the kernel, so the NIC
@@ -117,6 +119,45 @@ if grep -q 'gudao_selftest' /proc/cmdline 2>/dev/null; then
     poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
 fi
 
+# --- CI desktop self-test (kernel cmdline: gudao_desktoptest) ----
+# unpacks the desktop pack, starts Xorg (Mesa CPU rendering) +
+# xfwm4 + xfce4-panel + pcmanfm + lxterminal, verifies them and
+# powers off
+if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
+    echo "[desktop] launching desktop stack (unpack + Xorg + xfwm4 + panel + pcmanfm + lxterminal)..."
+    /usr/bin/desktop 2>&1
+    echo "[desktop] launcher finished, checking processes..."
+    sleep 5
+    OK=1
+    for p in Xorg xfwm4 xfce4-panel pcmanfm lxterminal; do
+        if pgrep -x "$p" >/dev/null 2>&1; then
+            echo "[desktop] $p: running"
+        else
+            echo "[desktop] $p: NOT RUNNING"
+            OK=0
+        fi
+    done
+    if DISPLAY=:0 glxinfo -B 2>/dev/null | grep -qiE 'llvmpipe|softpipe|swrast'; then
+        echo "[desktop] MESA CPU RENDER (llvmpipe): PASS"
+    else
+        echo "[desktop] MESA CPU RENDER: FAIL"
+        OK=0
+        echo "[desktop] glxinfo output:"
+        DISPLAY=:0 glxinfo -B 2>&1 | head -20
+    fi
+    echo "[desktop] Xorg log tail:"
+    tail -8 /var/log/Xorg.0.log 2>/dev/null || true
+    if [ "$OK" = "1" ]; then
+        echo "[selftest] DESKTOP PASS"
+        echo "DESKTOP TEST PASSED - Gudao Linux GUI is alive!"
+    else
+        echo "[selftest] DESKTOP FAILED"
+    fi
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    sleep 5
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+fi
+
 # bring the network up before the shell appears (DHCP + DNS 8.8.8.8)
 gudao_net_up
 
@@ -132,7 +173,7 @@ echo
 echo "  Welcome to Gudao Linux"
 echo "  Kernel : $(uname -s) $(uname -r)"
 echo "  Shell  : busybox ash   (type 'help' to list all applets)"
-echo "  Extras : calc <expr>  |  about   (Gudao built-in commands)"
+echo "  Extras : calc <expr>  |  about   |  desktop   (Gudao built-in commands)"
 echo "  Network: $NET_LINE"
 echo "  System : live in RAM - nothing persists across reboot"
 echo
