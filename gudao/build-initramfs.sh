@@ -173,6 +173,16 @@ echo
 EOF
 chmod 755 "$ROOT/usr/bin/desktop"
 
+# ---- embed the apt pack if it has been built ----
+# (package manager: apt+dpkg unpacked by /init at every boot, see
+# gudao/build-apt-pack.sh - works headless, independent of the desktop pack)
+if [ -f "$TOP_DIR/apt-pack.tar.gz" ]; then
+    echo ">>> embedding apt pack into initramfs /opt/"
+    cp "$TOP_DIR/apt-pack.tar.gz" "$ROOT/opt/apt-pack.tar.gz"
+else
+    echo ">>> no apt-pack.tar.gz found, building initramfs without apt"
+fi
+
 # ---- embed the desktop pack if it has been built ----
 if [ -f "$TOP_DIR/desktop-pack.tar.gz" ]; then
     echo ">>> embedding desktop pack into initramfs /opt/"
@@ -183,9 +193,20 @@ fi
 
 cat > "$ROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
+_apt:x:100:100::/nonexistent:/bin/false
+nobody:x:65534:65534:nobody:/nonexistent:/bin/false
 EOF
 cat > "$ROOT/etc/group" <<'EOF'
 root:x:0:
+_apt:x:100:
+nogroup:x:65534:
+EOF
+cat > "$ROOT/etc/hosts" <<'EOF'
+127.0.0.1 localhost gudao
+::1 localhost ip6-localhost ip6-loopback
+EOF
+cat > "$ROOT/etc/hostname" <<'EOF'
+gudao
 EOF
 
 cp "$GUDAO_DIR/gudao-banner.txt" "$ROOT/etc/gudao-banner"

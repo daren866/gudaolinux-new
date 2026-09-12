@@ -14,6 +14,7 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 终端 | `/dev/console` 上的 BusyBox ash（setsid + cttyhack） |
 | 键盘 | 基础键盘驱动：PS/2（i8042 + atkbd）与 USB（xHCI/EHCI/UHCI + usbhid），全部内建 |
 | 网络 | Intel e1000/e1000e 网卡驱动内建；**开机自动 DHCP 分配 IP**，DNS 固定为 `8.8.8.8` |
+| 包管理 | **apt + dpkg 开机即用**，默认源为清华 TUNA（trixie + updates/backports + security），可在运行时安装/卸载软件（装在 RAM，重启后消失） |
 | 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal**；libinput 输入管理 |
 | 图形驱动 | 内建：QEMU（bochs/cirrus/virtio-gpu）、VMware（vmwgfx + vmmouse）、VirtualBox（vboxvideo）；VESA fb 兜底 |
 | 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
@@ -59,6 +60,26 @@ cpu: Intel Core i7-6500U
 # cat /etc/resolv.conf     # nameserver 8.8.8.8
 # route                    # 查看默认网关
 ```
+
+## 包管理（apt，TUNA 源）
+
+系统内置 apt + dpkg，开机自动解包就绪（无需先启动桌面）：
+
+```text
+# apt update                          # 从清华 TUNA + security.debian.org 拉索引
+# apt install <包名>                   # 安装软件（含 contrib/non-free/non-free-firmware）
+# apt remove <包名>                    # 卸载
+# apt search <关键词>                  # 搜索
+```
+
+- 源配置：`/etc/apt/sources.list`（传统格式），三件套 `trixie / trixie-updates /
+  trixie-backports` 走 `mirrors.tuna.tsinghua.edu.cn`，安全更新走官方
+  `security.debian.org`；deb-src 默认注释以提高 update 速度
+- HTTPS 证书与 Debian 签名密钥环已内置（ca-certificates + debian-archive-keyring）
+- 活系统策略：包安装时**不会自动启动服务**（policy-rc.d），systemd 不存在，
+  服务脚本调用 systemctl 会被静默忽略（仅装包不启动）
+- **注意：整个系统驻留 RAM，apt 装的软件重启后消失**；如需长期保留请把软件
+  装进持久化存储（后续版本提供）
 
 ## 图形桌面（`desktop` 命令）
 
@@ -143,6 +164,7 @@ qemu-system-x86_64 -m 512M -nographic -cdrom GudaoLinux-*.iso
 gudao/kernel-fragment.config      内核配置片段（键盘/串口/网络/显卡/命名）
 gudao/initramfs-init.sh           initramfs 启动脚本（busybox 终端入口 + CI 自测）
 gudao/build-initramfs.sh          initramfs 组装脚本（含 desktop 启动器生成）
+gudao/build-apt-pack.sh           apt 包管理器构建（apt+dpkg+密钥环+CA证书闭包，TUNA sources.list）
 gudao/build-desktop-pack.sh       桌面包构建（Debian trixie Xorg/XFCE 依赖闭包）
 gudao/build-iso.sh                GRUB ISO 制作脚本
 gudao/grub/grub.cfg               GRUB 引导菜单

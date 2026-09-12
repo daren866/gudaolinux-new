@@ -28,6 +28,23 @@ mount -t tmpfs -o mode=1777 shm /dev/shm 2>/dev/null || true
 mkdir -p /dev/pts
 mount -t devpts devpts /dev/pts 2>/dev/null || true
 
+# --- apt pack: unpack the package manager at every boot ----------
+# The system lives in RAM, so /opt/apt-pack.tar.gz is unpacked on boot
+# (unlike the desktop pack which waits for the `desktop` command): apt
+# should work headless from the very first shell prompt.
+if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
+    echo "gudao: unpacking package manager (apt)..."
+    tar xzf /opt/apt-pack.tar.gz -C / \
+        --exclude=etc/resolv.conf \
+        --exclude=etc/hosts \
+        --exclude=etc/hostname \
+        --exclude=etc/passwd \
+        --exclude=etc/group \
+        --exclude=etc/gudao-banner 2>/dev/null || true
+    rm -f /opt/apt-pack.tar.gz   # free the RAM occupied by the archive
+    echo "gudao: apt ready (sources: TUNA trixie + security.debian.org)"
+fi
+
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------
 # The e1000/e1000e driver is built into the kernel, so the NIC
 # shows up as eth0 automatically. udhcpc asks a DHCP server for
@@ -213,6 +230,69 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
     poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
 fi
 
+# --- CI apt self-test (kernel cmdline: gudao_apttest) ---------
+# end-to-end package manager test against the REAL configured mirrors:
+# apt-get update -> install 'ed' -> run it -> remove it -> power off
+if grep -q 'gudao_apttest' /proc/cmdline 2>/dev/null; then
+    if [ ! -x /usr/bin/apt-get ]; then
+        echo "[apt] FAIL: apt-get not present (apt pack missing?)"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+    fi
+    gudao_net_up
+    echo "[apt] NET: $NET_IFACE $NET_IP"
+    echo "[apt] apt-get update (TUNA trixie + security.debian.org)..."
+    if apt-get update >/var/log/apt-update.log 2>&1; then
+        echo "[apt] APT UPDATE: PASS ($(ls /var/lib/apt/lists/ 2>/dev/null | grep -c '_Packages$') indexes)"
+    else
+        echo "[apt] APT UPDATE: FAIL - log tail:"
+        tail -15 /var/log/apt-update.log 2>/dev/null || true
+        echo "[selftest] APT FAILED"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    fi
+    echo "[apt] apt-get install ed (small editor, only libc dependency)..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ed >/var/log/apt-install.log 2>&1 \
+       && dpkg -s ed >/dev/null 2>&1 && [ -x /usr/bin/ed ]; then
+        echo "[apt] APT INSTALL: PASS ($(dpkg -s ed 2>/dev/null | grep '^Version:' | tr -d '\r'))"
+    else
+        echo "[apt] APT INSTALL: FAIL - log tail:"
+        tail -15 /var/log/apt-install.log 2>/dev/null || true
+        echo "[selftest] APT FAILED"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    fi
+    R="$(printf 'a\nhello from apt\n.\np\n' | ed 2>/dev/null | tail -1)"
+    if [ "$R" = "hello from apt" ]; then
+        echo "[apt] APT RUN: PASS (ed executed: $R)"
+    else
+        echo "[apt] APT RUN: FAIL (ed output: $R)"
+        echo "[selftest] APT FAILED"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    fi
+    echo "[apt] apt-get remove ed..."
+    if DEBIAN_FRONTEND=noninteractive apt-get remove -y ed >/var/log/apt-remove.log 2>&1 \
+       && ! dpkg -s ed >/dev/null 2>&1; then
+        echo "[apt] APT REMOVE: PASS"
+    else
+        echo "[apt] APT REMOVE: FAIL - log tail:"
+        tail -15 /var/log/apt-remove.log 2>/dev/null || true
+        echo "[selftest] APT FAILED"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    fi
+    echo "[selftest] APT PASS"
+    echo "APT TEST PASSED - Gudao package manager is alive!"
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    sleep 5
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+fi
+
 # bring the network up before the shell appears (DHCP + DNS 8.8.8.8)
 gudao_net_up
 
@@ -228,7 +308,7 @@ echo
 echo "  Welcome to Gudao Linux"
 echo "  Kernel : $(uname -s) $(uname -r)"
 echo "  Shell  : busybox ash   (type 'help' to list all applets)"
-echo "  Extras : calc <expr>  |  about   |  desktop   (Gudao built-in commands)"
+echo "  Extras : calc <expr>  |  about  |  desktop  |  apt install <pkg>"
 echo "  Network: $NET_LINE"
 echo "  System : live in RAM - nothing persists across reboot"
 echo

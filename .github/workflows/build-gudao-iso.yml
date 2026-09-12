@@ -101,6 +101,9 @@ jobs:
           ./busybox calc '2*(2+2)'
           ./busybox about
 
+      - name: Build Gudao apt pack (apt + dpkg + keyring + CA certs from Debian trixie)
+        run: bash gudao/build-apt-pack.sh
+
       - name: Build Gudao desktop pack (Xorg + XFCE from Debian trixie)
         run: bash gudao/build-desktop-pack.sh
 
@@ -223,6 +226,33 @@ jobs:
             exit 1
           fi
 
+      - name: APT test (QEMU, real update/install/run/remove against TUNA mirror)
+        run: |
+          # Boots with gudao_apttest: unpacks the apt pack, brings up DHCP,
+          # runs apt-get update against the shipped TUNA sources.list,
+          # installs 'ed', executes it, removes it, powers off.
+          set +e
+          timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
+            -kernel vmlinuz-gudao \
+            -initrd initramfs-gudao.img \
+            -device e1000,netdev=net0 -netdev user,id=net0 \
+            -append "console=ttyS0 gudao_apttest panic=-1" \
+            </dev/null > apttest.log 2>&1
+          RC=$?
+          set -e
+          echo "qemu exit code: $RC"
+          tail -50 apttest.log
+          if grep -q "APT UPDATE: PASS" apttest.log && grep -q "APT INSTALL: PASS" apttest.log \
+             && grep -q "APT RUN: PASS" apttest.log && grep -q "APT REMOVE: PASS" apttest.log \
+             && grep -q "APT TEST PASSED" apttest.log; then
+            echo "=============================================="
+            echo " APT TEST PASSED - package manager is alive!"
+            echo "=============================================="
+          else
+            echo " APT TEST FAILED"
+            exit 1
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -245,6 +275,8 @@ jobs:
           - Bootloader: GRUB 2 (BIOS + UEFI hybrid), quiet display-only boot by default
           - Userland: BusyBox shell with Gudao applets (live in RAM)
           - Built-in commands: calc <expr>, about, desktop (start the GUI)
+          - Package manager: apt + dpkg ready at boot (TUNA trixie mirror,
+            contrib/non-free enabled; installs live in RAM, gone on reboot)
           - Desktop: type 'desktop' -> Xorg (Mesa llvmpipe CPU rendering)
             + xfwm4 + xfce4-panel + xfdesktop + thunar + xfce4-terminal
           - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
@@ -271,6 +303,8 @@ jobs:
             about            -> system / kernel / ram / cpu info
             desktop          -> Xorg + xfwm4 + xfce4-panel + xfdesktop
                                 + thunar + xfce4-terminal
+            apt update && apt install ed   -> install packages (TUNA mirror,
+                live in RAM: installed packages are lost on reboot)
             ifconfig         -> see the DHCP-assigned address
             cat /etc/resolv.conf  -> nameserver 8.8.8.8"
           gh release create "$TAG" \
