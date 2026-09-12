@@ -13,6 +13,7 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 用户态 | BusyBox 1.36.1（**全静态编译**，无 glibc 依赖）+ Gudao 自研 applet |
 | 终端 | `/dev/console` 上的 BusyBox ash（setsid + cttyhack） |
 | 键盘 | 基础键盘驱动：PS/2（i8042 + atkbd）与 USB（xHCI/EHCI/UHCI + usbhid），全部内建 |
+| 网络 | Intel e1000/e1000e 网卡驱动内建；**开机自动 DHCP 分配 IP**，DNS 固定为 `8.8.8.8` |
 | 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
 | CI | GitHub Actions：内核 → busybox → initramfs → QEMU 冒烟测试 → ISO → Release |
 
@@ -39,6 +40,23 @@ cpu: Intel Core i7-6500U
 
 添加新指令：在 `busybox-1.36.1/miscutils/` 下新建 `<name>.c`（仿照 `about.c` 的
 `//config:` / `//applet:` / `//usage:` 头部），提交后 CI 自动编译进 ISO。
+
+## 网络（e1000 + 自动 DHCP + DNS 8.8.8.8）
+
+- 驱动：Intel e1000 / e1000e **内建于内核**（CONFIG_E1000=y），QEMU、VirtualBox、
+  VMware 默认虚拟网卡开机即可识别为 `eth0`
+- 自动分配 IP：init 引导阶段用 busybox `udhcpc` 向 DHCP 服务器申请地址
+  （QEMU/VirtualBox/家用路由器的 DHCP 均可直接使用），并自动配置默认网关
+- DNS：`/etc/resolv.conf` 固定包含 `nameserver 8.8.8.8`（DHCP 下发的 DNS 也会写入，
+  8.8.8.8 始终兜底）
+- 开机欢迎页会显示获取到的地址，例如 `Network: eth0  10.0.2.15  (dhcp, dns 8.8.8.8)`
+- 手动验证：
+
+```text
+# ifconfig eth0            # 查看 DHCP 分配到的地址
+# cat /etc/resolv.conf     # nameserver 8.8.8.8
+# route                    # 查看默认网关
+```
 
 ## 自动构建
 

@@ -57,6 +57,10 @@ jobs:
           make olddefconfig
           echo "==> key config check:"
           grep -E 'CONFIG_(LOCALVERSION=|KEYBOARD_ATKBD=|SERIO_I8042=|VT=|BLK_DEV_INITRD=|DEVTMPFS=|SERIAL_8250_CONSOLE=)' .config
+          echo "==> network config check (e1000 + DHCP stack):"
+          grep -E 'CONFIG_(E1000=|E1000E=|NET=|INET=|PACKET=)' .config
+          # fail the build if e1000 is not built-in (initramfs ships no modules)
+          grep -q '^CONFIG_E1000=y' .config || { echo 'CONFIG_E1000=y missing!'; exit 1; }
 
       - name: Build kernel (bzImage)
         run: |
@@ -74,9 +78,16 @@ jobs:
           # Gudao applets (calc, about) are default-y; make it explicit
           sed -i 's/^# CONFIG_CALC is not set/CONFIG_CALC=y/' .config
           sed -i 's/^# CONFIG_ABOUT is not set/CONFIG_ABOUT=y/' .config
+          # udhcpc (DHCP client) + ifconfig/route/ip for boot-time networking
+          sed -i 's/^# CONFIG_UDHCPC is not set/CONFIG_UDHCPC=y/' .config
           # build the binary only (docs were stripped from the repo copy)
           make -j"$(nproc)" busybox
           file busybox
+          echo "==> required applets:"
+          for a in calc about udhcpc ifconfig route ip; do
+            ./busybox --list | grep -qx "$a" || { echo "  applet $a MISSING"; exit 1; }
+            echo "  $a: OK"
+          done
           echo "==> smoke test: calc / about"
           ./busybox calc '2*(2+2)'
           ./busybox about
@@ -115,12 +126,13 @@ jobs:
             exit 1
           fi
 
-      - name: Self-test calc & about applets (QEMU)
+      - name: Self-test calc / about / network (QEMU)
         run: |
           set +e
           timeout 180 qemu-system-x86_64 -m 512M -nographic -no-reboot \
             -kernel vmlinuz-gudao \
             -initrd initramfs-gudao.img \
+            -device e1000,netdev=net0 -netdev user,id=net0 \
             -append "console=ttyS0 gudao_selftest panic=-1" \
             </dev/null > selftest.log 2>&1
           RC=$?
@@ -133,9 +145,11 @@ jobs:
           grep -q "^kernel: Linux"   selftest.log || { echo "  about(kernel) FAILED";  FAIL=1; }
           grep -q "^ram: "           selftest.log || { echo "  about(ram) FAILED";     FAIL=1; }
           grep -q "^cpu: "           selftest.log || { echo "  about(cpu) FAILED";     FAIL=1; }
+          grep -q "NET PASS"         selftest.log || { echo "  net selftest FAILED";   FAIL=1; }
+          grep -q "DNS PASS"         selftest.log || { echo "  dns selftest FAILED";   FAIL=1; }
           if [ "$FAIL" = "0" ]; then
             echo "=============================================="
-            echo " CALC/ABOUT SELFTEST PASSED"
+            echo " CALC/ABOUT/NETWORK SELFTEST PASSED"
             echo "=============================================="
           else
             exit 1
@@ -163,18 +177,23 @@ jobs:
           - Bootloader: GRUB 2 (BIOS + UEFI hybrid), quiet display-only boot by default
           - Userland: BusyBox shell with Gudao applets (live in RAM)
           - Built-in commands: calc <expr> (math calculator), about (system info)
+          - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
           - Keyboard: AT/PS2 (i8042) + USB HID built-in
-          - Boot test: passed headless in QEMU (incl. calc/about selftest)
+          - Boot test: passed headless in QEMU (incl. calc/about/network selftest)
 
           How to use:
           1. Download gudao-linux-${KVER}.iso
           2. Burn to CD/USB or attach to a VM as CD-ROM
           3. Default boots silently (no kernel log). For kernel log,
              pick a 'with kernel log' entry in the GRUB menu.
+          4. Network comes up automatically via DHCP (QEMU/VirtualBox work
+             out of the box); DNS resolver is set to 8.8.8.8.
 
           Try in the shell:
             calc 2*(2+2)     -> 8
-            about            -> system / kernel / ram / cpu info"
+            about            -> system / kernel / ram / cpu info
+            ifconfig         -> see the DHCP-assigned address
+            cat /etc/resolv.conf  -> nameserver 8.8.8.8"
           gh release create "$TAG" \
             "gudao-linux-${KVER}.iso" \
             vmlinuz-gudao \
