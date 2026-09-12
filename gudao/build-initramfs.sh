@@ -93,6 +93,13 @@ fi
 # 3. runtime dirs + dbus + Mesa CPU rendering (llvmpipe)
 mkdir -p /tmp/.X11-unix /var/log /var/lib/dbus /root/.config
 chmod 1777 /tmp/.X11-unix
+# devpts fallback: VTE terminals (xfce4-terminal) open shells through
+# /dev/ptmx -> /dev/pts/N; if init did not mount devpts for any reason,
+# mount it here or every terminal fails with "Failed to open PTY"
+mkdir -p /dev/pts
+mountpoint -q /dev/pts 2>/dev/null \
+  || mount -t devpts devpts /dev/pts 2>/dev/null \
+  || true
 dbus-uuidgen --ensure >/dev/null 2>&1 || true
 eval "$(dbus-launch --sh-syntax 2>/dev/null)"
 export LIBGL_ALWAYS_SOFTWARE=1        # force Mesa software rendering (llvmpipe)

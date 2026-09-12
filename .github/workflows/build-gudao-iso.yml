@@ -64,8 +64,10 @@ jobs:
           echo "==> graphics config check (KMS drivers + firmware fb fallback):"
           grep -E 'CONFIG_(DRM=|DRM_BOCHS=|DRM_CIRRUS_QEMU=|DRM_QXL=|DRM_VIRTIO_GPU=|DRM_VMWGFX=|DRM_VBOXVIDEO=|DRM_SIMPLEDRM=|SYSFB_SIMPLEFB=|FB_VESA=|FB_EFI=|FRAMEBUFFER_CONSOLE=)' .config || true
           # fail the build if core graphics are not built-in (initramfs ships no
-          # modules); catches typo'd symbol names silently dropped by olddefconfig
-          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y; do
+          # modules); catches typo'd symbol names silently dropped by olddefconfig.
+          # UNIX98_PTYS: without it there is no /dev/ptmx and VTE terminals
+          # (xfce4-terminal) fail with "Failed to open PTY"
+          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y; do
             grep -q "^CONFIG_$sym" .config || { echo "CONFIG_$sym missing! (typo or symbol removed from kernel?)"; exit 1; }
           done
 
@@ -184,7 +186,8 @@ jobs:
           echo "qemu exit code: $RC"
           tail -70 desktop.log
           if grep -q "DESKTOP PASS" desktop.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop.log \
-             && grep -q "PANEL WINDOW: PASS" desktop.log && grep -q "MIME database: OK" desktop.log; then
+             && grep -q "PANEL WINDOW: PASS" desktop.log && grep -q "MIME database: OK" desktop.log \
+             && grep -q "PTY (devpts): PASS" desktop.log; then
             echo "=============================================="
             echo " DESKTOP TEST PASSED - Gudao GUI is alive!"
             echo "=============================================="
@@ -210,7 +213,8 @@ jobs:
           echo "qemu exit code: $RC"
           tail -50 desktop-qxl.log
           if grep -q "DESKTOP PASS" desktop-qxl.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop-qxl.log \
-             && grep -q "PANEL WINDOW: PASS" desktop-qxl.log && grep -q "MIME database: OK" desktop-qxl.log; then
+             && grep -q "PANEL WINDOW: PASS" desktop-qxl.log && grep -q "MIME database: OK" desktop-qxl.log \
+             && grep -q "PTY (devpts): PASS" desktop-qxl.log; then
             echo "=============================================="
             echo " DESKTOP TEST (qxl) PASSED"
             echo "=============================================="
@@ -245,6 +249,8 @@ jobs:
             + xfwm4 + xfce4-panel + xfdesktop + thunar + xfce4-terminal
           - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
           - Keyboard/mouse: PS/2, USB HID, VMware vmmouse; libinput under X
+          - Fixed: devpts now mounted at boot - xfce4-terminal could not
+            open a PTY before ("Failed to open PTY: No such file or directory")
           - GPU drivers built-in: QEMU (bochs/cirrus/qxl/virtio), VMware (vmwgfx),
             VirtualBox (vboxvideo + VMSVGA), plus a VESA/EFI framebuffer fallback
             (simpledrm) so the desktop also works with any other virtual GPU

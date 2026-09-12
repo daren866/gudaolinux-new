@@ -20,6 +20,13 @@ mount -t sysfs none /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || mdev -s
 # /dev/shm: POSIX shared memory, needed by X11 (MIT-SHM) and GTK
 mount -t tmpfs -o mode=1777 shm /dev/shm 2>/dev/null || true
+# /dev/pts: PTY slave devices. devtmpfs alone does NOT provide them - the
+# devpts filesystem must be mounted explicitly. Without it every terminal
+# emulator (xfce4-terminal / VTE) fails with "Failed to open PTY: No such
+# file or directory"; busybox ash keeps working only because it sits on
+# /dev/console instead of a PTY.
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null || true
 
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------
 # The e1000/e1000e driver is built into the kernel, so the NIC
@@ -170,6 +177,19 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
         echo "[desktop] MIME database: OK"
     else
         echo "[desktop] MIME database: MISSING"
+        OK=0
+    fi
+    # PTY support (devpts): xfce4-terminal cannot spawn a shell without it,
+    # yet its process stays alive showing an error dialog - so the process
+    # check above would still pass. Test the real thing: devpts mounted AND
+    # /dev/ptmx openable.
+    if grep -q 'devpts' /proc/mounts 2>/dev/null \
+       && (exec 3<>/dev/ptmx) 2>/dev/null; then
+        echo "[desktop] PTY (devpts): PASS"
+    else
+        echo "[desktop] PTY (devpts): FAIL (terminal emulators cannot open a pty)"
+        echo "[desktop] /proc/mounts devpts line: $(grep devpts /proc/mounts 2>/dev/null || echo none)"
+        echo "[desktop] /dev/ptmx: $(ls -la /dev/ptmx 2>/dev/null || echo MISSING)"
         OK=0
     fi
     if DISPLAY=:0 glxinfo -B 2>/dev/null | grep -qiE 'llvmpipe|softpipe|swrast'; then
