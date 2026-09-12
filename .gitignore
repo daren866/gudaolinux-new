@@ -182,3 +182,11 @@ sphinx_*/
 /*
 !/debian/
 !/busybox-1.36.1/
+
+#
+# Gudao Linux build assets (r16 fix: new files under gudao/ and .github/
+# were silently swallowed by the /* rule above - git add refused and
+# git commit -a never picked them up, breaking CI with exit 127)
+#
+!/gudao/
+!/.github/
