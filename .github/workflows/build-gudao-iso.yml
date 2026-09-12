@@ -182,7 +182,8 @@ jobs:
           set -e
           echo "qemu exit code: $RC"
           tail -70 desktop.log
-          if grep -q "DESKTOP PASS" desktop.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop.log; then
+          if grep -q "DESKTOP PASS" desktop.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop.log \
+             && grep -q "PANEL WINDOW: PASS" desktop.log && grep -q "MIME database: OK" desktop.log; then
             echo "=============================================="
             echo " DESKTOP TEST PASSED - Gudao GUI is alive!"
             echo "=============================================="
@@ -207,7 +208,8 @@ jobs:
           set -e
           echo "qemu exit code: $RC"
           tail -50 desktop-qxl.log
-          if grep -q "DESKTOP PASS" desktop-qxl.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop-qxl.log; then
+          if grep -q "DESKTOP PASS" desktop-qxl.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop-qxl.log \
+             && grep -q "PANEL WINDOW: PASS" desktop-qxl.log && grep -q "MIME database: OK" desktop-qxl.log; then
             echo "=============================================="
             echo " DESKTOP TEST (qxl) PASSED"
             echo "=============================================="

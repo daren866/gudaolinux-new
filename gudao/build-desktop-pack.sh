@@ -30,6 +30,14 @@ PKGS=(
   xfce4-panel
   pcmanfm
   lxterminal
+  # xfce session daemons: xfconf provides xfconfd (panel layout storage -
+  # without it xfce4-panel shows NO panel at all), xfce4-settings provides
+  # xfsettingsd (theme/icon settings). Both are only Recommends of the
+  # panel, so --no-install-recommends drops them - list them explicitly!
+  xfconf
+  xfce4-settings
+  # SVG icon loader for gdk-pixbuf (adwaita icons ship SVG variants)
+  librsvg2-common
   # desktop infrastructure
   dbus
   dbus-x11
@@ -91,6 +99,9 @@ test -f "$ROOT/usr/bin/lxterminal"      || { echo "FAIL: lxterminal missing";   
 test -f "$ROOT/usr/bin/udevadm"         || { echo "FAIL: udevadm missing";       exit 1; }
 test -f "$ROOT/usr/bin/dbus-launch"     || { echo "FAIL: dbus-launch missing";   exit 1; }
 test -f "$ROOT/usr/bin/glxinfo"         || { echo "FAIL: glxinfo missing";       exit 1; }
+test -f "$ROOT/usr/lib/x86_64-linux-gnu/xfce4/xfconf/xfconfd" || { echo "FAIL: xfconfd missing (xfce4-panel will not display!)"; exit 1; }
+test -f "$ROOT/usr/bin/xfsettingsd"     || { echo "FAIL: xfsettingsd missing";   exit 1; }
+test -f "$ROOT/usr/bin/update-mime-database" || { echo "FAIL: update-mime-database missing (image sniffing will break!)"; exit 1; }
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/dri/ || true
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvmpipe backend) present"
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"

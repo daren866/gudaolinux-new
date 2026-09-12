@@ -146,6 +146,32 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
             OK=0
         fi
     done
+    # the panel PROCESS can be alive while its window never shows - check
+    # the real thing: a mapped xfce4-panel window on the root
+    PWAIT=0
+    while [ $PWAIT -lt 10 ]; do
+        DISPLAY=:0 xwininfo -root -tree 2>/dev/null | grep -qi 'xfce4.panel' && break
+        PWAIT=$((PWAIT+1))
+        sleep 1
+    done
+    if DISPLAY=:0 xwininfo -root -tree 2>/dev/null | grep -qi 'xfce4.panel'; then
+        echo "[desktop] PANEL WINDOW: PASS"
+    else
+        echo "[desktop] PANEL WINDOW: NOT MAPPED"
+        OK=0
+        echo "[desktop] xfce4-panel log tail:"
+        tail -12 /var/log/xfce4-panel.log 2>/dev/null || true
+        echo "[desktop] top-level windows:"
+        DISPLAY=:0 xwininfo -root -tree 2>/dev/null | sed -n '3,12p' || true
+    fi
+    # GIO mime database (without it gdk-pixbuf cannot recognize ANY image
+    # and GTK apps abort on the first icon load)
+    if [ -f /usr/share/mime/mime.cache ]; then
+        echo "[desktop] MIME database: OK"
+    else
+        echo "[desktop] MIME database: MISSING"
+        OK=0
+    fi
     if DISPLAY=:0 glxinfo -B 2>/dev/null | grep -qiE 'llvmpipe|softpipe|swrast'; then
         echo "[desktop] MESA CPU RENDER (llvmpipe): PASS"
     else

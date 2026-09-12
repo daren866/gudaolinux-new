@@ -55,10 +55,16 @@ if [ ! -x /usr/bin/xfwm4 ]; then
         || { echo "desktop: unpack failed"; exit 1; }
     rm -f "$PACK"   # free the RAM occupied by the archive
     echo "desktop: pack unpacked."
-    # generate the gdk-pixbuf loader cache (Debian debs don't ship it,
-    # without it GTK apps cannot load any icons/images)
+    # generate the gdk-pixbuf loader cache (Debian debs don't ship it;
+    # external loaders like gif/tiff/svg are dead without it)
     GPQ=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders
     [ -x "$GPQ" ] && "$GPQ" --update-cache >/dev/null 2>&1 || true
+    # regenerate the freedesktop MIME database. The shared-mime-info deb only
+    # ships the XML source - without the compiled cache GIO cannot sniff ANY
+    # image type, gdk-pixbuf reports "Unrecognized image file format" and GTK
+    # aborts on the first icon load (this used to crash xfce4-panel instantly)
+    UMD=/usr/bin/update-mime-database
+    [ -x "$UMD" ] && "$UMD" /usr/share/mime >/dev/null 2>&1 || true
 fi
 
 # 2. udev (libinput needs the udev database to find mice/keyboards)
@@ -87,6 +93,17 @@ export GALLIUM_DRIVER=llvmpipe
 export NO_AT_BRIDGE=1                 # no accessibility bus in the live system
 export DISPLAY=:0
 
+# 3b. xfce session daemons (need the session bus from dbus-launch above):
+#   xfconfd     - stores the panel layout; xfce4-panel shows NO panel without it
+#   xfsettingsd - applies theme/icon/keyboard settings
+XCFD=/usr/lib/x86_64-linux-gnu/xfce4/xfconf/xfconfd
+if [ -x "$XCFD" ]; then
+    "$XCFD" >/var/log/xfconfd.log 2>&1 &
+fi
+if [ -x /usr/bin/xfsettingsd ]; then
+    xfsettingsd >/var/log/xfsettingsd.log 2>&1 &
+fi
+
 # 4. Xorg on vt1 (modesetting on a DRM card; fbdev/vesa fallback + Mesa GLX)
 echo "desktop: graphics devices: /dev/dri=[$(ls /dev/dri 2>/dev/null | tr '\n' ' ')] fb=[$(ls /dev/fb* 2>/dev/null | tr '\n' ' ')]"
 echo "desktop: starting Xorg (Mesa CPU rendering)..."
@@ -108,13 +125,29 @@ fi
 
 # 5. window manager first, then the rest
 echo "desktop: loading xfwm4 (window manager)..."
-xfwm4 --compositor=off &
+xfwm4 --compositor=off >/var/log/xfwm4.log 2>&1 &
 echo "desktop: loading xfce4-panel..."
-xfce4-panel &
+xfce4-panel >/var/log/xfce4-panel.log 2>&1 &
 echo "desktop: loading pcmanfm (desktop background)..."
-pcmanfm --desktop &
+pcmanfm --desktop >/var/log/pcmanfm.log 2>&1 &
 echo "desktop: loading lxterminal..."
-lxterminal &
+lxterminal >/var/log/lxterminal.log 2>&1 &
+
+# 6. verify the panel window is actually mapped on the screen (the process
+#    can be alive while its window never shows - verify the real thing)
+PANEL_OK=0
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    xwininfo -root -tree 2>/dev/null | grep -qi 'xfce4.panel' && PANEL_OK=1 && break
+    sleep 1
+done
+if [ "$PANEL_OK" = "1" ]; then
+    echo "desktop: panel window mapped."
+else
+    echo "desktop: WARNING - panel window not detected! panel log tail:"
+    tail -12 /var/log/xfce4-panel.log 2>/dev/null || true
+    echo "desktop: top-level windows on screen:"
+    xwininfo -root -tree 2>/dev/null | sed -n '3,12p' || true
+fi
 
 echo
 echo "  Desktop is up: Xorg (Mesa llvmpipe) + xfwm4 + xfce4-panel + pcmanfm + lxterminal"
