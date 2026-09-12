@@ -95,7 +95,19 @@ ls "$ROOT"/usr/lib/x86_64-linux-gnu/dri/ || true
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvmpipe backend) present"
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"
 
+echo ">>> top-level usrmerge symlinks in the pack (bin/sbin are excluded:"
+echo ">>>  they collide with the busybox initramfs root; all real files live in /usr)"
+ls -la "$ROOT" | grep -E ' bin| sbin| lib| lib64' || true
+
 echo ">>> packing desktop-pack.tar.gz"
-tar czf "$OUT" -C "$ROOT" .
+# NOTE: exclude the top-level ./bin and ./sbin symlinks (Debian usrmerge):
+# they would collide with the real /bin and /sbin directories of the
+# busybox initramfs (tar: can't remove old file ./sbin: Is a directory).
+# Every real file lives under ./usr, which merges cleanly. /lib64 must be
+# kept: the ELF interpreter path /lib64/ld-linux-x86-64.so.2 is required.
+tar czf "$OUT" -C "$ROOT" \
+    --exclude='./bin' \
+    --exclude='./sbin' \
+    .
 echo ">>> unpacked size: $(du -sh "$ROOT" | cut -f1)"
 echo ">>> desktop pack written: $OUT ($(du -h "$OUT" | cut -f1))"
