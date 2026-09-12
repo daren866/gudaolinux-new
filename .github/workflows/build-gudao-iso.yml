@@ -85,13 +85,21 @@ jobs:
         run: bash gudao/build-initramfs.sh
 
       - name: Build ISO (GRUB)
-        run: bash gudao/build-iso.sh
+        run: |
+          # validate grub.cfg syntax before packing (default entry is quiet display-only)
+          grub-script-check gudao/grub.cfg && echo "grub.cfg syntax OK"
+          bash gudao/build-iso.sh
 
       - name: Boot test (QEMU headless)
         run: |
-          ISO=$(ls gudao-linux-*.iso)
+          # NOTE: the ISO's default GRUB entry is now quiet display-only (no serial
+          # output), so we verify the console=ttyS0 boot path by direct kernel boot.
           set +e
-          timeout 240 qemu-system-x86_64 -m 512M -cdrom "$ISO" -nographic -no-reboot > boot.log 2>&1
+          timeout 240 qemu-system-x86_64 -m 512M -nographic -no-reboot \
+            -kernel vmlinuz-gudao \
+            -initrd initramfs-gudao.img \
+            -append "console=ttyS0 panic=-1" \
+            </dev/null > boot.log 2>&1
           RC=$?
           set -e
           echo "qemu exit code: $RC (124 = killed by timeout, expected)"
@@ -152,7 +160,7 @@ jobs:
           TITLE="Gudao Linux ${KVER} (build #${GITHUB_RUN_NUMBER})"
           NOTES="Gudao Linux ${KVER} - auto-built bootable ISO.
 
-          - Bootloader: GRUB 2 (BIOS + UEFI hybrid)
+          - Bootloader: GRUB 2 (BIOS + UEFI hybrid), quiet display-only boot by default
           - Userland: BusyBox shell with Gudao applets (live in RAM)
           - Built-in commands: calc <expr> (math calculator), about (system info)
           - Keyboard: AT/PS2 (i8042) + USB HID built-in
@@ -161,7 +169,8 @@ jobs:
           How to use:
           1. Download gudao-linux-${KVER}.iso
           2. Burn to CD/USB or attach to a VM as CD-ROM
-          3. Pick 'Gudao Linux' in the GRUB menu and enjoy the shell!
+          3. Default boots silently (no kernel log). For kernel log,
+             pick a 'with kernel log' entry in the GRUB menu.
 
           Try in the shell:
             calc 2*(2+2)     -> 8

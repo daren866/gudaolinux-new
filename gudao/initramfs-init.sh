@@ -11,6 +11,9 @@ export TERM=linux
 
 /bin/busybox --install -s /bin 2>/dev/null
 
+# keep the console quiet at runtime too (only KERN_ERR and worse)
+dmesg -n 3 2>/dev/null || true
+
 mkdir -p /proc /sys /dev /tmp /mnt /root
 mount -t proc none /proc
 mount -t sysfs none /sys

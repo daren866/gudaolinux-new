@@ -13,7 +13,7 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 用户态 | BusyBox 1.36.1（**全静态编译**，无 glibc 依赖）+ Gudao 自研 applet |
 | 终端 | `/dev/console` 上的 BusyBox ash（setsid + cttyhack） |
 | 键盘 | 基础键盘驱动：PS/2（i8042 + atkbd）与 USB（xHCI/EHCI/UHCI + usbhid），全部内建 |
-| 引导 | GRUB 2，默认 5 秒菜单，含串口控制台与 nomodeset 备用启动项 |
+| 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
 | CI | GitHub Actions：内核 → busybox → initramfs → QEMU 冒烟测试 → ISO → Release |
 
 ## 内置指令（Gudao applets）
