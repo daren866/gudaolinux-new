@@ -3,7 +3,7 @@
 # Build the Gudao Linux desktop pack.
 # Downloads the dependency closure of the X desktop stack from
 # Debian trixie (Xorg + Mesa llvmpipe + xfwm4 + xfce4-panel +
-# pcmanfm + lxterminal + dbus + udev + fonts), unpacks the debs
+# xfdesktop + thunar + xfce4-terminal + dbus + udev + fonts), unpacks the debs
 # into a rootfs tree, strips docs/locales and packs it into
 # desktop-pack.tar.gz which gets embedded into the initramfs
 # at /opt/. The `desktop` command unpacks it at runtime.
@@ -12,8 +12,9 @@ set -euo pipefail
 
 TOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$TOP_DIR/desktop-pack.tar.gz"
-APTROOT=/tmp/aptroot
-ROOT=/tmp/desktop-root
+# paths are overridable for local verification (CI uses the defaults)
+APTROOT="${GUDAO_APTROOT:-/tmp/aptroot}"
+ROOT="${GUDAO_DESKTOP_ROOT:-/tmp/desktop-root}"
 
 PKGS=(
   # X server + drivers (modesetting is built into xserver-xorg-core)
@@ -28,8 +29,15 @@ PKGS=(
   # desktop applications
   xfwm4
   xfce4-panel
-  pcmanfm
-  lxterminal
+  # native XFCE desktop layer (wallpaper + desktop icons, replaces the old
+  # pcmanfm --desktop; thunar is its file-manager companion)
+  # NOTE: Debian binary package name is xfdesktop4 (not xfdesktop)
+  xfdesktop4
+  thunar
+  xfce4-terminal
+  # MIME handler database: thunar 'Open With' and the garcon appmenu of
+  # xfdesktop read the update-desktop-database cache
+  desktop-file-utils
   # xfce session daemons: xfconf provides xfconfd (panel layout storage -
   # without it xfce4-panel shows NO panel at all), xfce4-settings provides
   # xfsettingsd (theme/icon settings). Both are only Recommends of the
@@ -94,8 +102,9 @@ echo ">>> sanity checks"
 test -f "$ROOT/usr/lib/xorg/Xorg"       || { echo "FAIL: Xorg binary missing";   exit 1; }
 test -f "$ROOT/usr/bin/xfwm4"           || { echo "FAIL: xfwm4 missing";         exit 1; }
 test -f "$ROOT/usr/bin/xfce4-panel"     || { echo "FAIL: xfce4-panel missing";   exit 1; }
-test -f "$ROOT/usr/bin/pcmanfm"         || { echo "FAIL: pcmanfm missing";       exit 1; }
-test -f "$ROOT/usr/bin/lxterminal"      || { echo "FAIL: lxterminal missing";    exit 1; }
+test -f "$ROOT/usr/bin/xfdesktop"       || { echo "FAIL: xfdesktop missing";     exit 1; }
+test -f "$ROOT/usr/bin/thunar"          || { echo "FAIL: thunar missing";        exit 1; }
+test -f "$ROOT/usr/bin/xfce4-terminal"  || { echo "FAIL: xfce4-terminal missing"; exit 1; }
 test -f "$ROOT/usr/bin/udevadm"         || { echo "FAIL: udevadm missing";       exit 1; }
 test -f "$ROOT/usr/bin/dbus-launch"     || { echo "FAIL: dbus-launch missing";   exit 1; }
 test -f "$ROOT/usr/bin/glxinfo"         || { echo "FAIL: glxinfo missing";       exit 1; }
@@ -105,6 +114,7 @@ test -f "$ROOT/usr/bin/update-mime-database" || { echo "FAIL: update-mime-databa
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/dri/ || true
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvmpipe backend) present"
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"
+ls "$ROOT"/usr/bin/update-desktop-database >/dev/null 2>&1 && echo "desktop-file-utils present"
 
 echo ">>> top-level usrmerge symlinks in the pack (bin/sbin are excluded:"
 echo ">>>  they collide with the busybox initramfs root; all real files live in /usr)"

@@ -14,7 +14,7 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 终端 | `/dev/console` 上的 BusyBox ash（setsid + cttyhack） |
 | 键盘 | 基础键盘驱动：PS/2（i8042 + atkbd）与 USB（xHCI/EHCI/UHCI + usbhid），全部内建 |
 | 网络 | Intel e1000/e1000e 网卡驱动内建；**开机自动 DHCP 分配 IP**，DNS 固定为 `8.8.8.8` |
-| 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → pcmanfm 桌面 → lxterminal**；libinput 输入管理 |
+| 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal**；libinput 输入管理 |
 | 图形驱动 | 内建：QEMU（bochs/cirrus/virtio-gpu）、VMware（vmwgfx + vmmouse）、VirtualBox（vboxvideo）；VESA fb 兜底 |
 | 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
 | CI | GitHub Actions：内核 → busybox → 桌面包 → initramfs → QEMU 冒烟测试（含桌面自测） → ISO → Release |
@@ -71,8 +71,9 @@ desktop: unpacking desktop pack (first run only, please wait)...
 desktop: starting Xorg (Mesa CPU rendering)...
 desktop: loading xfwm4 (window manager)...
 desktop: loading xfce4-panel...
-desktop: loading pcmanfm (desktop background)...
-desktop: loading lxterminal...
+desktop: loading xfdesktop (desktop layer)...
+desktop: loading thunar (file manager, daemon mode)...
+desktop: loading xfce4-terminal...
 ```
 
 启动顺序与组件：
@@ -81,12 +82,13 @@ desktop: loading lxterminal...
    强制 **Mesa llvmpipe CPU 渲染**（无需 GPU）；
 2. **xfwm4** — 窗口管理器（关闭合成器，纯 CPU 友好）；
 3. **xfce4-panel** — 顶栏（应用菜单/任务列表/时钟）；
-4. **pcmanfm --desktop** — 桌面背景与右键菜单；
-5. **lxterminal** — 自动打开一个终端窗口。
+4. **xfdesktop** — 桌面背景、桌面图标与右键菜单；
+5. **thunar** — 文件管理器（守护模式随桌面启动，双击桌面图标即可打开）；
+6. **xfce4-terminal** — 自动打开一个终端窗口。
 
 技术实现：
 
-- 桌面用户态来自 **Debian trixie**（Xorg/Mesa/XFCE/LXDE 依赖闭包），CI 自动下载
+- 桌面用户态来自 **Debian trixie**（Xorg/Mesa/XFCE 依赖闭包），CI 自动下载
   解包打为 `desktop-pack.tar.gz` 嵌入 initramfs `/opt/`，`desktop` 命令首次运行时
   解压到根（tmpfs），并排除 resolv.conf/hosts/passwd 等基础文件防覆盖；
 - 输入：**libinput** + udev（udevd 启动后供 libinput 枚举设备），PS/2 / USB HID /
@@ -141,7 +143,7 @@ qemu-system-x86_64 -m 512M -nographic -cdrom GudaoLinux-*.iso
 gudao/kernel-fragment.config      内核配置片段（键盘/串口/网络/显卡/命名）
 gudao/initramfs-init.sh           initramfs 启动脚本（busybox 终端入口 + CI 自测）
 gudao/build-initramfs.sh          initramfs 组装脚本（含 desktop 启动器生成）
-gudao/build-desktop-pack.sh       桌面包构建（Debian trixie Xorg/XFCE/LXDE 依赖闭包）
+gudao/build-desktop-pack.sh       桌面包构建（Debian trixie Xorg/XFCE 依赖闭包）
 gudao/build-iso.sh                GRUB ISO 制作脚本
 gudao/grub/grub.cfg               GRUB 引导菜单
 busybox-1.36.1/                   BusyBox 完整源码（含 Gudao applet：calc、about）

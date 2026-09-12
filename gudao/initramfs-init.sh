@@ -121,10 +121,10 @@ fi
 
 # --- CI desktop self-test (kernel cmdline: gudao_desktoptest) ----
 # unpacks the desktop pack, starts Xorg (Mesa CPU rendering) +
-# xfwm4 + xfce4-panel + pcmanfm + lxterminal, verifies them and
-# powers off
+# xfwm4 + xfce4-panel + xfdesktop + thunar + xfce4-terminal,
+# verifies them and powers off
 if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
-    echo "[desktop] launching desktop stack (unpack + Xorg + xfwm4 + panel + pcmanfm + lxterminal)..."
+    echo "[desktop] launching desktop stack (unpack + Xorg + xfwm4 + panel + xfdesktop + thunar + xfce4-terminal)..."
     /usr/bin/desktop 2>&1
     echo "[desktop] launcher finished, checking processes..."
     sleep 5
@@ -138,7 +138,7 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
         echo "[desktop] Xorg: NOT RUNNING (no X0 socket)"
         OK=0
     fi
-    for p in xfwm4 xfce4-panel pcmanfm lxterminal; do
+    for p in xfwm4 xfce4-panel xfdesktop thunar xfce4-terminal; do
         if pgrep -x "$p" >/dev/null 2>&1; then
             echo "[desktop] $p: running"
         else

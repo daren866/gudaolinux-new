@@ -99,7 +99,7 @@ jobs:
           ./busybox calc '2*(2+2)'
           ./busybox about
 
-      - name: Build Gudao desktop pack (Xorg + XFCE + LXDE from Debian trixie)
+      - name: Build Gudao desktop pack (Xorg + XFCE from Debian trixie)
         run: bash gudao/build-desktop-pack.sh
 
       - name: Build initramfs
@@ -166,11 +166,12 @@ jobs:
             exit 1
           fi
 
-      - name: Desktop test (QEMU, Xorg + xfwm4 + panel + pcmanfm + lxterminal)
+      - name: Desktop test (QEMU, Xorg + xfwm4 + panel + xfdesktop + thunar + xfce4-terminal)
         run: |
           # Boots with gudao_desktoptest: unpacks the desktop pack, starts
-          # Xorg (Mesa llvmpipe CPU rendering), xfwm4, xfce4-panel, pcmanfm
-          # and lxterminal, verifies all processes + glxinfo, powers off.
+          # Xorg (Mesa llvmpipe CPU rendering), xfwm4, xfce4-panel, xfdesktop,
+          # thunar and xfce4-terminal, verifies all processes + glxinfo,
+          # powers off.
           set +e
           timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
             -kernel vmlinuz-gudao \
@@ -241,7 +242,7 @@ jobs:
           - Userland: BusyBox shell with Gudao applets (live in RAM)
           - Built-in commands: calc <expr>, about, desktop (start the GUI)
           - Desktop: type 'desktop' -> Xorg (Mesa llvmpipe CPU rendering)
-            + xfwm4 + xfce4-panel + pcmanfm desktop + lxterminal
+            + xfwm4 + xfce4-panel + xfdesktop + thunar + xfce4-terminal
           - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
           - Keyboard/mouse: PS/2, USB HID, VMware vmmouse; libinput under X
           - GPU drivers built-in: QEMU (bochs/cirrus/qxl/virtio), VMware (vmwgfx),
@@ -262,7 +263,8 @@ jobs:
           Try in the shell:
             calc 2*(2+2)     -> 8
             about            -> system / kernel / ram / cpu info
-            desktop          -> Xorg + xfwm4 + xfce4-panel + pcmanfm + lxterminal
+            desktop          -> Xorg + xfwm4 + xfce4-panel + xfdesktop
+                                + thunar + xfce4-terminal
             ifconfig         -> see the DHCP-assigned address
             cat /etc/resolv.conf  -> nameserver 8.8.8.8"
           gh release create "$TAG" \

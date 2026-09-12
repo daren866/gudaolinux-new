@@ -28,13 +28,15 @@ chmod 755 "$ROOT/init"
 # ---- the `desktop` command (Xorg + Mesa CPU rendering + xfwm4 stack) ----
 # The heavy desktop payload lives in /opt/desktop-pack.tar.gz (embedded below);
 # this launcher unpacks it on first use and brings the stack up in order:
-#   Xorg (Mesa llvmpipe) -> xfwm4 -> xfce4-panel -> pcmanfm --desktop -> lxterminal
+#   Xorg (Mesa llvmpipe) -> xfwm4 -> xfce4-panel -> xfdesktop
+#   -> thunar --daemon + xfce4-terminal
 cat > "$ROOT/usr/bin/desktop" <<'EOF'
 #!/bin/sh
 # ------------------------------------------------------------
 # Gudao Linux desktop launcher
 #   desktop   -> Xorg (Mesa CPU rendering) + xfwm4 + xfce4-panel
-#                + pcmanfm desktop + lxterminal
+#                + xfdesktop + thunar (file manager, daemon mode)
+#                + xfce4-terminal
 # ------------------------------------------------------------
 PACK=/opt/desktop-pack.tar.gz
 
@@ -65,6 +67,11 @@ if [ ! -x /usr/bin/xfwm4 ]; then
     # aborts on the first icon load (this used to crash xfce4-panel instantly)
     UMD=/usr/bin/update-mime-database
     [ -x "$UMD" ] && "$UMD" /usr/share/mime >/dev/null 2>&1 || true
+    # regenerate the .desktop MIME handler cache (same story: debs ship no
+    # cache; without it thunar 'Open With' and the xfdesktop/garcon menu
+    # application lists are incomplete)
+    UDD=/usr/bin/update-desktop-database
+    [ -x "$UDD" ] && "$UDD" /usr/share/applications >/dev/null 2>&1 || true
 fi
 
 # 2. udev (libinput needs the udev database to find mice/keyboards)
@@ -128,10 +135,12 @@ echo "desktop: loading xfwm4 (window manager)..."
 xfwm4 --compositor=off >/var/log/xfwm4.log 2>&1 &
 echo "desktop: loading xfce4-panel..."
 xfce4-panel >/var/log/xfce4-panel.log 2>&1 &
-echo "desktop: loading pcmanfm (desktop background)..."
-pcmanfm --desktop >/var/log/pcmanfm.log 2>&1 &
-echo "desktop: loading lxterminal..."
-lxterminal >/var/log/lxterminal.log 2>&1 &
+echo "desktop: loading xfdesktop (desktop layer)..."
+xfdesktop >/var/log/xfdesktop.log 2>&1 &
+echo "desktop: loading thunar (file manager, daemon mode)..."
+thunar --daemon >/var/log/thunar.log 2>&1 &
+echo "desktop: loading xfce4-terminal..."
+xfce4-terminal >/var/log/xfce4-terminal.log 2>&1 &
 
 # 6. verify the panel window is actually mapped on the screen (the process
 #    can be alive while its window never shows - verify the real thing)
@@ -150,7 +159,8 @@ else
 fi
 
 echo
-echo "  Desktop is up: Xorg (Mesa llvmpipe) + xfwm4 + xfce4-panel + pcmanfm + lxterminal"
+echo "  Desktop is up: Xorg (Mesa llvmpipe) + xfwm4 + xfce4-panel + xfdesktop"
+echo "                  + thunar (file manager) + xfce4-terminal"
 echo "  Look at the GUI display of your VM / machine (vt1)."
 echo
 EOF
