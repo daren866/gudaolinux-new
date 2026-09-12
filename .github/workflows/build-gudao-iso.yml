@@ -64,22 +64,22 @@ jobs:
           cp arch/x86/boot/bzImage vmlinuz-gudao
           file vmlinuz-gudao
 
-      - name: Build BusyBox (static)
+      - name: Build BusyBox (static, from repo source with Gudao applets)
         run: |
-          wget -q https://busybox.net/downloads/busybox-1.36.1.tar.bz2
-          tar xf busybox-1.36.1.tar.bz2
           cd busybox-1.36.1
           make defconfig
           sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
           # tc applet breaks with kernel headers >= 6.8 (struct tc_cbq_wrropt removed)
           sed -i 's/^CONFIG_TC=y/# CONFIG_TC is not set/' .config
-          make -j"$(nproc)" || {
-            echo "busybox source build failed - falling back to distro busybox-static"
-            cd ..
-            sudo apt-get install -y busybox-static
-            cp /bin/busybox busybox-1.36.1/busybox
-          }
-          file busybox-1.36.1/busybox
+          # Gudao applets (calc, about) are default-y; make it explicit
+          sed -i 's/^# CONFIG_CALC is not set/CONFIG_CALC=y/' .config
+          sed -i 's/^# CONFIG_ABOUT is not set/CONFIG_ABOUT=y/' .config
+          # build the binary only (docs were stripped from the repo copy)
+          make -j"$(nproc)" busybox
+          file busybox
+          echo "==> smoke test: calc / about"
+          ./busybox calc '2*(2+2)'
+          ./busybox about
 
       - name: Build initramfs
         run: bash gudao/build-initramfs.sh
@@ -107,6 +107,32 @@ jobs:
             exit 1
           fi
 
+      - name: Self-test calc & about applets (QEMU)
+        run: |
+          set +e
+          timeout 180 qemu-system-x86_64 -m 512M -nographic -no-reboot \
+            -kernel vmlinuz-gudao \
+            -initrd initramfs-gudao.img \
+            -append "console=ttyS0 gudao_selftest panic=-1" \
+            </dev/null > selftest.log 2>&1
+          RC=$?
+          set -e
+          echo "qemu exit code: $RC"
+          tail -40 selftest.log
+          FAIL=0
+          grep -q "CALC PASS"        selftest.log || { echo "  calc selftest FAILED";    FAIL=1; }
+          grep -q "system: Gudao Linux" selftest.log || { echo "  about(system) FAILED";  FAIL=1; }
+          grep -q "^kernel: Linux"   selftest.log || { echo "  about(kernel) FAILED";  FAIL=1; }
+          grep -q "^ram: "           selftest.log || { echo "  about(ram) FAILED";     FAIL=1; }
+          grep -q "^cpu: "           selftest.log || { echo "  about(cpu) FAILED";     FAIL=1; }
+          if [ "$FAIL" = "0" ]; then
+            echo "=============================================="
+            echo " CALC/ABOUT SELFTEST PASSED"
+            echo "=============================================="
+          else
+            exit 1
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -127,14 +153,19 @@ jobs:
           NOTES="Gudao Linux ${KVER} - auto-built bootable ISO.
 
           - Bootloader: GRUB 2 (BIOS + UEFI hybrid)
-          - Userland: BusyBox shell (live in RAM)
+          - Userland: BusyBox shell with Gudao applets (live in RAM)
+          - Built-in commands: calc <expr> (math calculator), about (system info)
           - Keyboard: AT/PS2 (i8042) + USB HID built-in
-          - Boot test: passed headless in QEMU
+          - Boot test: passed headless in QEMU (incl. calc/about selftest)
 
           How to use:
           1. Download gudao-linux-${KVER}.iso
           2. Burn to CD/USB or attach to a VM as CD-ROM
-          3. Pick 'Gudao Linux' in the GRUB menu and enjoy the shell!"
+          3. Pick 'Gudao Linux' in the GRUB menu and enjoy the shell!
+
+          Try in the shell:
+            calc 2*(2+2)     -> 8
+            about            -> system / kernel / ram / cpu info"
           gh release create "$TAG" \
             "gudao-linux-${KVER}.iso" \
             vmlinuz-gudao \
