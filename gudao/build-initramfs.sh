@@ -55,6 +55,10 @@ if [ ! -x /usr/bin/xfwm4 ]; then
         || { echo "desktop: unpack failed"; exit 1; }
     rm -f "$PACK"   # free the RAM occupied by the archive
     echo "desktop: pack unpacked."
+    # generate the gdk-pixbuf loader cache (Debian debs don't ship it,
+    # without it GTK apps cannot load any icons/images)
+    GPQ=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders
+    [ -x "$GPQ" ] && "$GPQ" --update-cache >/dev/null 2>&1 || true
 fi
 
 # 2. udev (libinput needs the udev database to find mice/keyboards)
@@ -67,6 +71,12 @@ if [ ! -d /run/udev/data ]; then
     udevadm settle >/dev/null 2>&1 || true
 fi
 
+# 2b. system dbus bus (Xorg connects to it; silences dbus-core errors)
+if [ ! -S /run/dbus/system_bus_socket ]; then
+    mkdir -p /run/dbus
+    dbus-daemon --system --fork >/dev/null 2>&1 || true
+fi
+
 # 3. runtime dirs + dbus + Mesa CPU rendering (llvmpipe)
 mkdir -p /tmp/.X11-unix /var/log /var/lib/dbus /root/.config
 chmod 1777 /tmp/.X11-unix
@@ -74,6 +84,7 @@ dbus-uuidgen --ensure >/dev/null 2>&1 || true
 eval "$(dbus-launch --sh-syntax 2>/dev/null)"
 export LIBGL_ALWAYS_SOFTWARE=1        # force Mesa software rendering (llvmpipe)
 export GALLIUM_DRIVER=llvmpipe
+export NO_AT_BRIDGE=1                 # no accessibility bus in the live system
 export DISPLAY=:0
 
 # 4. Xorg on vt1 (fbdev/modesetting kernel driver + Mesa GLX)

@@ -129,7 +129,16 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
     echo "[desktop] launcher finished, checking processes..."
     sleep 5
     OK=1
-    for p in Xorg xfwm4 xfce4-panel pcmanfm lxterminal; do
+    # Xorg: verify via its X11 unix socket (pgrep by name is unreliable -
+    # Xorg rewrites its own process title; the running server + glxinfo
+    # were proven working while pgrep -x "Xorg" still missed it)
+    if [ -S /tmp/.X11-unix/X0 ]; then
+        echo "[desktop] Xorg: running (socket /tmp/.X11-unix/X0 present)"
+    else
+        echo "[desktop] Xorg: NOT RUNNING (no X0 socket)"
+        OK=0
+    fi
+    for p in xfwm4 xfce4-panel pcmanfm lxterminal; do
         if pgrep -x "$p" >/dev/null 2>&1; then
             echo "[desktop] $p: running"
         else
