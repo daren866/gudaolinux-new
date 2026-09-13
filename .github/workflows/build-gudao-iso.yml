@@ -233,7 +233,10 @@ jobs:
         run: |
           # Boots with gudao_apttest: unpacks the apt pack, brings up DHCP,
           # runs apt-get update against the shipped TUNA sources.list,
-          # installs 'ed', executes it, removes it, powers off.
+          # installs 'ed', executes it, removes it, then installs python3
+          # (full dependency chain: tzdata + debconf must configure cleanly
+          # on the merged-usr root - the r21-image regression), removes it,
+          # powers off.
           set +e
           timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
             -kernel vmlinuz-gudao \
@@ -247,6 +250,7 @@ jobs:
           tail -50 apttest.log
           if grep -q "APT UPDATE: PASS" apttest.log && grep -q "APT INSTALL: PASS" apttest.log \
              && grep -q "APT RUN: PASS" apttest.log && grep -q "APT REMOVE: PASS" apttest.log \
+             && grep -q "APT PYTHON3: PASS" apttest.log && grep -q "APT PYTHON3 REMOVE: PASS" apttest.log \
              && grep -q "APT TEST PASSED" apttest.log; then
             echo "=============================================="
             echo " APT TEST PASSED - package manager is alive!"
@@ -277,6 +281,10 @@ jobs:
 
           - Bootloader: GRUB 2 (BIOS + UEFI hybrid), quiet display-only boot by default
           - Userland: BusyBox shell with Gudao applets (live in RAM)
+          - Merged-usr root layout (/bin /sbin /lib /lib64 -> /usr): the
+            layout Debian trixie dpkg/apt require - packages that pull in
+            base-files or usrmerge configure cleanly, and apt no longer
+            warns about an unmerged /usr
           - Built-in commands: calc <expr>, about, desktop (start the GUI)
           - Package manager: apt + dpkg ready at boot (TUNA trixie mirror,
             contrib/non-free enabled; installs live in RAM, gone on reboot)

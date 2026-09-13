@@ -9,24 +9,44 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
 export TERM=linux
 
-/bin/busybox --install -s /bin 2>/dev/null
+# ---------------------------------------------------------------
+# merged-usr boot order (CRITICAL - do not reorder):
+#   1. mounts + apt-pack unpack, all via explicit /bin/busybox calls
+#   2. THEN install the busybox applets into /bin
+# The root is merged-usr (/bin -> usr/bin), so installing applets
+# means writing into /usr/bin - the SAME directory the packs fill
+# with real Debian binaries. Installing applets before the unpack
+# would leave symlinks in the way: busybox tar extracting a regular
+# file over an applet symlink would follow the link and clobber
+# /usr/bin/busybox itself. Applets are installed LAST; real files
+# from the packs always win (the installer skips existing paths).
+# ---------------------------------------------------------------
 
 # keep the console quiet at runtime too (only KERN_ERR and worse)
-dmesg -n 3 2>/dev/null || true
+/bin/busybox dmesg -n 3 2>/dev/null || true
 
-mkdir -p /proc /sys /dev /tmp /mnt /root /run /opt /var/log /var/lib/dbus /var/lib/xkb /var/cache
-mount -t proc none /proc
-mount -t sysfs none /sys
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || mdev -s
+/bin/busybox mkdir -p /proc /sys /dev /tmp /mnt /root /run /opt /var/log /var/lib/dbus /var/lib/xkb /var/cache
+/bin/busybox mount -t proc none /proc
+/bin/busybox mount -t sysfs none /sys
+/bin/busybox mount -t devtmpfs devtmpfs /dev 2>/dev/null || /bin/busybox mdev -s
 # /dev/shm: POSIX shared memory, needed by X11 (MIT-SHM) and GTK
-mount -t tmpfs -o mode=1777 shm /dev/shm 2>/dev/null || true
+/bin/busybox mount -t tmpfs -o mode=1777 shm /dev/shm 2>/dev/null || true
 # /dev/pts: PTY slave devices. devtmpfs alone does NOT provide them - the
 # devpts filesystem must be mounted explicitly. Without it every terminal
 # emulator (xfce4-terminal / VTE) fails with "Failed to open PTY: No such
 # file or directory"; busybox ash keeps working only because it sits on
 # /dev/console instead of a PTY.
-mkdir -p /dev/pts
-mount -t devpts devpts /dev/pts 2>/dev/null || true
+/bin/busybox mkdir -p /dev/pts
+/bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
+
+# merged-usr sanity: dpkg and apt 3.x refuse an unmerged usr (and a
+# runtime-installed usrmerge package would fail to configure, taking
+# whole install transactions down with it). Fail loudly at boot if the
+# four root symlinks are not exactly the layout the packs expect.
+for l in bin sbin lib lib64; do
+    [ -L "/$l" ] \
+        || echo "gudao: ERROR - /$l is not a symlink into /usr (merged-usr layout broken; package installs WILL fail)"
+done
 
 # --- apt pack: unpack the package manager at every boot ----------
 # The system lives in RAM, so /opt/apt-pack.tar.gz is unpacked on boot
@@ -34,7 +54,7 @@ mount -t devpts devpts /dev/pts 2>/dev/null || true
 # should work headless from the very first shell prompt.
 if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
     echo "gudao: unpacking package manager (apt)..."
-    tar xzf /opt/apt-pack.tar.gz -C / \
+    /bin/busybox tar xzf /opt/apt-pack.tar.gz -C / \
         --exclude=etc/resolv.conf \
         --exclude=etc/hosts \
         --exclude=etc/hostname \
@@ -42,7 +62,7 @@ if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
         --exclude=etc/group \
         --exclude=etc/gudao-banner \
         || echo "gudao: WARNING - tar reported errors unpacking the apt pack"
-    rm -f /opt/apt-pack.tar.gz   # free the RAM occupied by the archive
+    /bin/busybox rm -f /opt/apt-pack.tar.gz   # free the RAM occupied by the archive
     # verify reality instead of assuming success: a silent partial unpack
     # used to masquerade as "apt ready" here
     if [ -x /usr/bin/apt-get ]; then
@@ -55,16 +75,22 @@ if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
     #   and every repo is declared "not signed" despite successful downloads
     # - _apt-owned lists/archives partial dirs, else downloads either fail
     #   or fall back to unsandboxed-root mode
-    chmod 1777 /tmp 2>/dev/null
-    mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial /var/log/apt
-    chown -R _apt:_apt /var/lib/apt/lists /var/cache/apt/archives /var/log/apt 2>/dev/null
-    # PATH shadow fix: busybox ships a minimal `dpkg` applet at /bin/dpkg
-    # which would shadow the real /usr/bin/dpkg (PATH=/bin first). The
-    # busybox applet rejects even `dpkg -s`; remove the shadow so the real
-    # package manager resolves. (CONFIG_DPKG is also disabled in the
-    # busybox build; this line keeps older initramfs images working.)
-    rm -f /bin/dpkg
+    /bin/busybox chmod 1777 /tmp 2>/dev/null
+    /bin/busybox mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial /var/log/apt
+    /bin/busybox chown -R _apt:_apt /var/lib/apt/lists /var/cache/apt/archives /var/log/apt 2>/dev/null
 fi
+
+# ---- install the busybox applets (AFTER the packs unpacked) --------
+# /bin is a symlink to usr/bin on the merged-usr root, so this fills
+# /usr/bin with applet symlinks - skipping every path that already has a
+# real file from a pack (real binaries always win; e.g. the real dpkg,
+# tar, awk ... from Debian replace their busybox counterparts, which is
+# exactly what a merged system wants). A disabled dpkg applet
+# (CONFIG_DPKG=n in the busybox build) additionally guarantees the real
+# /usr/bin/dpkg can never be shadowed by a busybox lookalike.
+for a in $(/bin/busybox --list); do
+    [ -e "/bin/$a" ] || /bin/busybox ln -sf busybox "/bin/$a"
+done
 
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------
 # The e1000/e1000e driver is built into the kernel, so the NIC
@@ -253,7 +279,10 @@ fi
 
 # --- CI apt self-test (kernel cmdline: gudao_apttest) ---------
 # end-to-end package manager test against the REAL configured mirrors:
-# apt-get update -> install 'ed' -> run it -> remove it -> power off
+# apt-get update -> install 'ed' -> run it -> remove it ->
+# install python3 (the user case: a full dependency chain with
+# tzdata/debconf that must configure cleanly on the merged-usr root)
+# -> remove it -> power off
 if grep -q 'gudao_apttest' /proc/cmdline 2>/dev/null; then
     if [ ! -x /usr/bin/apt-get ]; then
         echo "[apt] FAIL: apt-get not present (apt pack missing?)"
@@ -285,7 +314,12 @@ if grep -q 'gudao_apttest' /proc/cmdline 2>/dev/null; then
         sleep 5
         poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
     fi
-    R="$(printf 'a\nhello from apt\n.\np\n' | ed 2>/dev/null | tail -1)"
+    # NOTE: the session must end with 'Q' (unconditional quit): the buffer
+    # was modified (append without write), so plain 'q' refuses with a "?"
+    # on stdout + exit 1 - and EOF without quit makes GNU ed print "?"
+    # too. (Run#21 passed only because PATH resolved to the busybox ed
+    # applet then; on the merged-usr root the real GNU ed runs.)
+    R="$(printf 'a\nhello from apt\n.\np\nQ\n' | ed 2>/dev/null | tail -1)"
     if [ "$R" = "hello from apt" ]; then
         echo "[apt] APT RUN: PASS (ed executed: $R)"
     else
@@ -297,11 +331,39 @@ if grep -q 'gudao_apttest' /proc/cmdline 2>/dev/null; then
     fi
     echo "[apt] apt-get remove ed..."
     if DEBIAN_FRONTEND=noninteractive apt-get remove -y ed >/var/log/apt-remove.log 2>&1 \
-       && ! dpkg-query -s ed >/dev/null 2>&1 && [ ! -x /usr/bin/ed ]; then
+       && ! dpkg-query -W -f='${Status}' ed 2>/dev/null | grep -q 'install ok installed' \
+       && [ ! -x /usr/bin/ed ]; then
         echo "[apt] APT REMOVE: PASS"
     else
         echo "[apt] APT REMOVE: FAIL - log tail:"
         tail -15 /var/log/apt-remove.log 2>/dev/null || true
+        echo "[selftest] APT FAILED"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    fi
+    echo "[apt] apt-get install python3 (full dependency chain: tzdata + debconf + netbase + media-types)..."
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 >/var/log/apt-python3.log 2>&1 \
+       && dpkg-query -s python3 >/dev/null 2>&1 && [ -x /usr/bin/python3 ]; then
+        PYV="$(python3 -c 'import sys; print(sys.version.split()[0])' 2>/dev/null)"
+        echo "[apt] APT PYTHON3: PASS (python $PYV)"
+    else
+        echo "[apt] APT PYTHON3: FAIL - log tail:"
+        tail -15 /var/log/apt-python3.log 2>/dev/null || true
+        echo "[selftest] APT FAILED"
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+        sleep 5
+        poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    fi
+    echo "[apt] apt-get remove python3..."
+    # assert on the dpkg status, not on a file: /usr/bin/python3 belongs
+    # to python3-minimal and survives the removal of the python3 metapkg
+    if DEBIAN_FRONTEND=noninteractive apt-get remove -y python3 >/var/log/apt-py-remove.log 2>&1 \
+       && ! dpkg-query -W -f='${Status}' python3 2>/dev/null | grep -q 'install ok installed'; then
+        echo "[apt] APT PYTHON3 REMOVE: PASS"
+    else
+        echo "[apt] APT PYTHON3 REMOVE: FAIL - log tail:"
+        tail -15 /var/log/apt-py-remove.log 2>/dev/null || true
         echo "[selftest] APT FAILED"
         poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
         sleep 5

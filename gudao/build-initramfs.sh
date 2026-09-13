@@ -17,15 +17,34 @@ fi
 echo ">>> using busybox: $BB"
 
 rm -rf "$ROOT"
-mkdir -p "$ROOT"/{bin,sbin,etc,proc,sys,dev,tmp,mnt,root,run,usr/bin,usr/sbin,opt,var/log,var/lib/dbus,var/lib/xkb,var/cache}
+mkdir -p "$ROOT"/{etc,proc,sys,dev,tmp,mnt,root,run,usr/bin,usr/sbin,usr/lib,usr/lib64,opt,var/log,var/lib/dbus,var/lib/xkb,var/cache}
 # /tmp MUST be world-writable (1777): apt's fetch sandbox drops privileges
 # to the _apt user and its gpgv verification does mkstemp(/tmp/apt.sig.*)
 # - a 755 /tmp makes every signature check fail with EACCES ("repository
 # is not signed") even though the download itself succeeded
 chmod 1777 "$ROOT/tmp"
 
-cp "$BB" "$ROOT/bin/busybox"
-chmod 755 "$ROOT/bin/busybox"
+# busybox lives in /usr/bin (merged-usr: /bin IS /usr/bin)
+cp "$BB" "$ROOT/usr/bin/busybox"
+chmod 755 "$ROOT/usr/bin/busybox"
+
+# ---- merged-usr root layout (mandatory since Debian bookworm) --------
+# /bin /sbin /lib /lib64 are symlinks into /usr. dpkg and apt 3.x REFUSE
+# an unmerged usr (apt warns "Unmerged usr is no longer supported" and a
+# runtime-pulled usrmerge package fails to configure - which took down
+# tzdata/libpython/python3 with it in the r21 image). The busybox root
+# OWNS these four symlinks; neither pack ever ships root-level entries,
+# so they survive every pack unpack untouched.
+ln -sfn usr/bin   "$ROOT/bin"
+ln -sfn usr/sbin  "$ROOT/sbin"
+ln -sfn usr/lib   "$ROOT/lib"
+ln -sfn usr/lib64 "$ROOT/lib64"
+for pair in "bin usr/bin" "sbin usr/sbin" "lib usr/lib" "lib64 usr/lib64"; do
+    set -- $pair
+    test -L "$ROOT/$1" && [ "$(readlink "$ROOT/$1")" = "$2" ] \
+        || { echo "FAIL: merged-usr symlink $ROOT/$1 -> $2 missing"; exit 1; }
+done
+echo ">>> merged-usr root layout in place"
 
 cp "$GUDAO_DIR/initramfs-init.sh" "$ROOT/init"
 chmod 755 "$ROOT/init"
@@ -52,7 +71,17 @@ if [ ! -x /usr/bin/xfwm4 ]; then
         exit 1
     fi
     echo "desktop: unpacking desktop pack (first run only, please wait)..."
-    tar xzf "$PACK" -C / \
+    # 1a. drop busybox applet symlinks first: the pack ships REAL binaries
+    # for many of the same paths, and tar extracting a regular file over an
+    # applet symlink would FOLLOW the link and clobber /usr/bin/busybox
+    # itself. Applets are restored after the unpack (real files win).
+    for f in /usr/bin/*; do
+        [ "$(/bin/busybox readlink "$f" 2>/dev/null)" = "busybox" ] \
+            && /bin/busybox rm -f "$f"
+    done
+    # 1b. unpack via the busybox binary directly (PATH applets just got
+    # swept, so bare 'tar' may not resolve)
+    /bin/busybox tar xzf "$PACK" -C / \
         --exclude=etc/resolv.conf \
         --exclude=etc/hosts \
         --exclude=etc/hostname \
@@ -60,7 +89,12 @@ if [ ! -x /usr/bin/xfwm4 ]; then
         --exclude=etc/group \
         --exclude=etc/gudao-banner \
         || { echo "desktop: unpack failed"; exit 1; }
-    rm -f "$PACK"   # free the RAM occupied by the archive
+    /bin/busybox rm -f "$PACK"   # free the RAM occupied by the archive
+    # 1c. restore the busybox applets the pack did not shadow with real
+    # binaries (real Debian binaries always win over applets)
+    for a in $(/bin/busybox --list); do
+        [ -e "/bin/$a" ] || /bin/busybox ln -sf busybox "/bin/$a"
+    done
     echo "desktop: pack unpacked."
     # generate the gdk-pixbuf loader cache (Debian debs don't ship it;
     # external loaders like gif/tiff/svg are dead without it)
@@ -81,7 +115,7 @@ fi
 
 # 2. udev (libinput needs the udev database to find mice/keyboards)
 if [ ! -d /run/udev/data ]; then
-    mkdir -p /run/udev
+    /bin/busybox mkdir -p /run/udev
     UDEVD=/usr/lib/systemd/systemd-udevd
     [ -x "$UDEVD" ] || UDEVD=/lib/udev/udevd
     "$UDEVD" --daemon >/dev/null 2>&1 || true
@@ -91,19 +125,22 @@ fi
 
 # 2b. system dbus bus (Xorg connects to it; silences dbus-core errors)
 if [ ! -S /run/dbus/system_bus_socket ]; then
-    mkdir -p /run/dbus
+    /bin/busybox mkdir -p /run/dbus
     dbus-daemon --system --fork >/dev/null 2>&1 || true
 fi
 
 # 3. runtime dirs + dbus + Mesa CPU rendering (llvmpipe)
-mkdir -p /tmp/.X11-unix /var/log /var/lib/dbus /root/.config
-chmod 1777 /tmp/.X11-unix
+# /bin/busybox prefix: the desktop pack may or may not ship coreutils, so
+# the real mkdir/chmod/mount may exist only as the (re-created) busybox
+# applets - call the binary directly to stay independent of PATH state
+/bin/busybox mkdir -p /tmp/.X11-unix /var/log /var/lib/dbus /root/.config
+/bin/busybox chmod 1777 /tmp/.X11-unix
 # devpts fallback: VTE terminals (xfce4-terminal) open shells through
 # /dev/ptmx -> /dev/pts/N; if init did not mount devpts for any reason,
 # mount it here or every terminal fails with "Failed to open PTY"
-mkdir -p /dev/pts
-mountpoint -q /dev/pts 2>/dev/null \
-  || mount -t devpts devpts /dev/pts 2>/dev/null \
+/bin/busybox mkdir -p /dev/pts
+/bin/busybox mountpoint -q /dev/pts 2>/dev/null \
+  || /bin/busybox mount -t devpts devpts /dev/pts 2>/dev/null \
   || true
 dbus-uuidgen --ensure >/dev/null 2>&1 || true
 eval "$(dbus-launch --sh-syntax 2>/dev/null)"

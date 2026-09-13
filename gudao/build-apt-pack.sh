@@ -45,6 +45,15 @@ PKGS=(
   # init-system-helpers) are perl scripts using core modules only -
   # perl-base makes them work for daemon-package postinsts
   perl-base
+  # GNU date for maintainer scripts: tzdata's postinst runs
+  #   date -d "$(LC_ALL=C TZ=UTC0 date)"   (GNU ctime format)
+  # under set -e - busybox date rejects that format ("invalid date",
+  # exit 1), killing the postinst and cascading the failure into every
+  # package that Depends tzdata (libpython3.13-stdlib, python3, ...).
+  # Real coreutils binaries also win over their busybox applet
+  # counterparts at applet-install time, which is what a merged system
+  # wants anyway.
+  coreutils
 )
 
 echo ">>> preparing isolated apt environment (Debian trixie, download only)"
@@ -85,22 +94,16 @@ rm -rf "$ROOT"/usr/share/doc "$ROOT"/usr/share/man "$ROOT"/usr/share/locale \
 find "$ROOT" -name '*.a' -print0 | xargs -0 -r rm -f
 find "$ROOT" -name '*.la' -print0 | xargs -0 -r rm -f
 
-echo ">>> creating usrmerge root symlinks"
-# On a real Debian system base-files ships /bin /lib /lib64 /sbin ->
-# usr/... top-level symlinks. The apt dependency closure does NOT pull
-# base-files, so we must create the critical one ourselves: every ELF
-# binary below has PT_INTERP=/lib64/ld-linux-x86-64.so.2, and without
-# the /lib64 symlink execve() returns ENOENT - the shell reports
-# "apt-get: not found" even though /usr/bin/apt-get is right there.
-# (The desktop pack gets these for free via its base-files dependency,
-# which is why the desktop worked while apt did not.)
-ln -sfn usr/lib64 "$ROOT/lib64"
-test -L "$ROOT/lib64"
-# /lib and the loader chain: /lib64 -> usr/lib64 (dir shipped by libc6),
-# whose ld-linux symlink points back to ../lib/x86_64-linux-gnu/ - that
-# resolves inside the pack without touching the root /lib
+echo ">>> verifying the ELF interpreter chain inside the pack"
+# /lib64 -> usr/lib64 is owned by the INITRAMFS ROOT (merged-usr layout,
+# see build-initramfs.sh); the pack itself must only carry the loader
+# content below /usr. libc6 ships /usr/lib64/ld-linux-x86-64.so.2 ->
+# ../lib/x86_64-linux-gnu/ld-linux-x86-64.so.2, so with the root symlink
+# in place every PT_INTERP=/lib64/ld-linux-x86-64.so.2 resolves.
 test -f "$ROOT/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" \
   || { echo "FAIL: dynamic loader missing from the closure"; exit 1; }
+test -L "$ROOT/usr/lib64/ld-linux-x86-64.so.2" \
+  || { echo "FAIL: usr/lib64/ld-linux-x86-64.so.2 symlink missing (libc6 must ship it)"; exit 1; }
 
 echo ">>> shipping Gudao apt sources (TUNA trixie, traditional format)"
 mkdir -p "$ROOT/etc/apt"
@@ -198,12 +201,12 @@ test -f "$ROOT/usr/bin/dpkg-deb" || { echo "FAIL: dpkg-deb missing"; exit 1; }
 test -f "$ROOT/usr/bin/gpgv"     || { echo "FAIL: gpgv missing";     exit 1; }
 test -f "$ROOT/usr/lib/apt/methods/https" \
   || { echo "FAIL: apt https method missing (https mirrors will not work!)"; exit 1; }
-test -L "$ROOT/lib64" \
-  || { echo "FAIL: /lib64 usrmerge symlink missing (every dynamic binary would die ENOENT!)"; exit 1; }
 test -f "$ROOT/usr/sbin/ldconfig" \
   || { echo "FAIL: ldconfig missing (libc6 postinst will fail on runtime installs)"; exit 1; }
 test -f "$ROOT/usr/bin/perl" \
   || { echo "FAIL: perl missing (deb-systemd-helper / update-rc.d are perl scripts)"; exit 1; }
+test -f "$ROOT/usr/bin/date" \
+  || { echo "FAIL: GNU date missing (tzdata postinst would die on busybox date -d)"; exit 1; }
 test -f "$ROOT/usr/share/keyrings/debian-archive-keyring.gpg" \
   || { echo "FAIL: debian archive keyring missing (apt update will fail signature check!)"; exit 1; }
 test -s "$ROOT/etc/ssl/certs/ca-certificates.crt" \
@@ -219,12 +222,23 @@ test -f "$ROOT/etc/apt/sources.list.d/debian.sources" \
   && { echo "FAIL: DEB822 debian.sources present - would double every apt index!"; exit 1; } || true
 echo ">>> apt/dpkg closure OK"
 
+echo ">>> no root-level layout entries in the pack"
+# the merged-usr symlinks (/bin /sbin /lib /lib64 -> usr/...) are owned by
+# the initramfs root - a pack shipping them would collide at unpack time
+for l in bin sbin lib lib64; do
+    test ! -e "$ROOT/$l" \
+        || { echo "FAIL: pack staging carries root-level /$l (the initramfs root owns the usrmerge layout)"; exit 1; }
+done
+
 echo ">>> packing apt-pack.tar.gz"
-# same usrmerge handling as the desktop pack: top-level ./bin and ./sbin
-# symlinks collide with the busybox initramfs root - exclude them
+# exclude the usrmerge root entries defensively: the root layout belongs
+# to the initramfs (build-initramfs.sh creates the four symlinks); every
+# real file lives under ./usr, which merges cleanly onto the live root
 tar czf "$OUT" -C "$ROOT" \
     --exclude='./bin' \
     --exclude='./sbin' \
+    --exclude='./lib' \
+    --exclude='./lib64' \
     .
 echo ">>> unpacked size: $(du -sh "$ROOT" | cut -f1)"
 echo ">>> apt pack written: $OUT ($(du -h "$OUT" | cut -f1))"

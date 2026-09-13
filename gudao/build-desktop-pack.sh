@@ -116,19 +116,30 @@ ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvm
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"
 ls "$ROOT"/usr/bin/update-desktop-database >/dev/null 2>&1 && echo "desktop-file-utils present"
 
-echo ">>> top-level usrmerge symlinks in the pack (bin/sbin are excluded:"
-echo ">>>  they collide with the busybox initramfs root; all real files live in /usr)"
-ls -la "$ROOT" | grep -E ' bin| sbin| lib| lib64' || true
+echo ">>> merged-usr staging checks (base-files must have extracted first)"
+# the desktop closure contains base-files which ships the four usrmerge
+# root symlinks; every other deb extracts THROUGH them, so the whole
+# staging tree must be merged-usr. If /bin is a real directory here the
+# extraction order broke (a deb shipped /bin content before base-files)
+# and the pack would collide with the live root's symlinks.
+test -L "$ROOT/bin"   && [ "$(readlink "$ROOT/bin")" = "usr/bin" ] \
+  || { echo "FAIL: staging /bin is not a symlink to usr/bin (base-files missing or extracted out of order)"; exit 1; }
+for l in sbin lib lib64; do
+    test -L "$ROOT/$l" \
+        || { echo "FAIL: staging /$l is not a usrmerge symlink"; exit 1; }
+done
+echo ">>> staging is merged-usr (bin/sbin/lib/lib64 -> usr/...): OK"
 
 echo ">>> packing desktop-pack.tar.gz"
-# NOTE: exclude the top-level ./bin and ./sbin symlinks (Debian usrmerge):
-# they would collide with the real /bin and /sbin directories of the
-# busybox initramfs (tar: can't remove old file ./sbin: Is a directory).
-# Every real file lives under ./usr, which merges cleanly. /lib64 must be
-# kept: the ELF interpreter path /lib64/ld-linux-x86-64.so.2 is required.
+# NOTE: exclude the top-level usrmerge symlinks (./bin ./sbin ./lib
+# ./lib64): the live root's initramfs owns that layout (build-initramfs.sh
+# creates the four symlinks), and a pack carrying them would collide at
+# unpack time. Every real file lives under ./usr, which merges cleanly.
 tar czf "$OUT" -C "$ROOT" \
     --exclude='./bin' \
     --exclude='./sbin' \
+    --exclude='./lib' \
+    --exclude='./lib64' \
     .
 echo ">>> unpacked size: $(du -sh "$ROOT" | cut -f1)"
 echo ">>> desktop pack written: $OUT ($(du -h "$OUT" | cut -f1))"
