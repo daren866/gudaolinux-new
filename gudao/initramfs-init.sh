@@ -264,6 +264,37 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
         echo "[desktop] glxinfo output:"
         DISPLAY=:0 glxinfo -B 2>&1 | head -20
     fi
+    # SOUND: the virtual sound cards are built into the kernel (Intel HDA
+    # for QEMU/VBox HD-Audio/VMware, ICH AC97 for VirtualBox/QEMU, Ensoniq
+    # ES1370/1371 for VMware/QEMU). Verify the card enumerates AND a test
+    # wav actually plays through the ALSA stack.
+    if [ -s /proc/asound/cards ]; then
+        echo "[desktop] SOUND CARD: PASS ($(sed -n '2p' /proc/asound/cards | sed 's/^ *//' | tr -s ' '))"
+    else
+        echo "[desktop] SOUND CARD: FAIL (/proc/asound/cards empty or missing)"
+        echo "[desktop] /proc/asound: $(ls /proc/asound/ 2>/dev/null | tr '\n' ' ')"
+        OK=0
+    fi
+    if [ -x /usr/bin/aplay ] && [ -f /usr/share/sounds/alsa/Front_Center.wav ]; then
+        # apply the standard mixer rules (unmute + sane levels); a codec
+        # without the expected controls only draws a WARNING - what counts
+        # is the playback assertion below
+        if ! alsactl init >/dev/null 2>&1; then
+            if ! amixer sset Master 100% unmute >/dev/null 2>&1; then
+                echo "[desktop] WARNING: mixer init failed (codec has no Master control?)"
+            fi
+        fi
+        if timeout 30 aplay -q /usr/share/sounds/alsa/Front_Center.wav 2>/tmp/aplay.err; then
+            echo "[desktop] SOUND PLAYBACK: PASS (Front_Center.wav via default PCM)"
+        else
+            echo "[desktop] SOUND PLAYBACK: FAIL - aplay reports:"
+            head -6 /tmp/aplay.err 2>/dev/null || true
+            OK=0
+        fi
+    else
+        echo "[desktop] SOUND PLAYBACK: FAIL (aplay or test wav missing - alsa-utils broken in the desktop pack?)"
+        OK=0
+    fi
     echo "[desktop] Xorg log tail:"
     tail -8 /var/log/Xorg.0.log 2>/dev/null || true
     if [ "$OK" = "1" ]; then

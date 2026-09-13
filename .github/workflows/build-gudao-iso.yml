@@ -59,6 +59,8 @@ jobs:
           grep -E 'CONFIG_(LOCALVERSION=|KEYBOARD_ATKBD=|SERIO_I8042=|VT=|BLK_DEV_INITRD=|DEVTMPFS=|SERIAL_8250_CONSOLE=)' .config
           echo "==> network config check (e1000 + DHCP stack):"
           grep -E 'CONFIG_(E1000=|E1000E=|NET=|INET=|PACKET=)' .config
+          echo "==> sound config check (HDA + AC97 + Ensoniq for QEMU/VBox/VMware):"
+          grep -E 'CONFIG_(SND=|SND_HDA_INTEL=|SND_HDA_GENERIC=|SND_INTEL8X0=|SND_AC97_CODEC=|SND_ENS1370=|SND_ENS1371=)' .config || true
           # fail the build if e1000 is not built-in (initramfs ships no modules)
           grep -q '^CONFIG_E1000=y' .config || { echo 'CONFIG_E1000=y missing!'; exit 1; }
           echo "==> graphics config check (KMS drivers + firmware fb fallback):"
@@ -67,7 +69,7 @@ jobs:
           # modules); catches typo'd symbol names silently dropped by olddefconfig.
           # UNIX98_PTYS: without it there is no /dev/ptmx and VTE terminals
           # (xfce4-terminal) fail with "Failed to open PTY"
-          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y; do
+          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y SOUND=y SND=y SND_PCI=y SND_HDA_INTEL=y SND_HDA_GENERIC=y SND_AC97_CODEC=y SND_INTEL8X0=y SND_ENS1370=y SND_ENS1371=y; do
             grep -q "^CONFIG_$sym" .config || { echo "CONFIG_$sym missing! (typo or symbol removed from kernel?)"; exit 1; }
           done
 
@@ -178,10 +180,14 @@ jobs:
         run: |
           # Boots with gudao_desktoptest: unpacks the desktop pack, starts
           # Xorg (Mesa llvmpipe CPU rendering), xfwm4, xfce4-panel, xfdesktop,
-          # thunar and xfce4-terminal, verifies all processes + glxinfo,
+          # thunar and xfce4-terminal, verifies all processes + glxinfo + a
+          # REAL sound playback through the emulated Intel HDA card
+          # (-audiodev none: the guest PCM open + DMA playback path must
+          # succeed on the driver stack regardless of any host audio),
           # powers off.
           set +e
           timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
+            -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
             -kernel vmlinuz-gudao \
             -initrd initramfs-gudao.img \
             -device e1000,netdev=net0 -netdev user,id=net0 \
@@ -193,7 +199,8 @@ jobs:
           tail -70 desktop.log
           if grep -q "DESKTOP PASS" desktop.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop.log \
              && grep -q "PANEL WINDOW: PASS" desktop.log && grep -q "MIME database: OK" desktop.log \
-             && grep -q "PTY (devpts): PASS" desktop.log; then
+             && grep -q "PTY (devpts): PASS" desktop.log \
+             && grep -q "SOUND CARD: PASS" desktop.log && grep -q "SOUND PLAYBACK: PASS" desktop.log; then
             echo "=============================================="
             echo " DESKTOP TEST PASSED - Gudao GUI is alive!"
             echo "=============================================="
@@ -209,6 +216,7 @@ jobs:
           set +e
           timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
             -vga qxl \
+            -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
             -kernel vmlinuz-gudao \
             -initrd initramfs-gudao.img \
             -device e1000,netdev=net0 -netdev user,id=net0 \
@@ -220,7 +228,8 @@ jobs:
           tail -50 desktop-qxl.log
           if grep -q "DESKTOP PASS" desktop-qxl.log && grep -q "MESA CPU RENDER (llvmpipe): PASS" desktop-qxl.log \
              && grep -q "PANEL WINDOW: PASS" desktop-qxl.log && grep -q "MIME database: OK" desktop-qxl.log \
-             && grep -q "PTY (devpts): PASS" desktop-qxl.log; then
+             && grep -q "PTY (devpts): PASS" desktop-qxl.log \
+             && grep -q "SOUND CARD: PASS" desktop-qxl.log && grep -q "SOUND PLAYBACK: PASS" desktop-qxl.log; then
             echo "=============================================="
             echo " DESKTOP TEST (qxl) PASSED"
             echo "=============================================="
@@ -290,6 +299,12 @@ jobs:
             contrib/non-free enabled; installs live in RAM, gone on reboot)
           - Desktop: type 'desktop' -> Xorg (Mesa llvmpipe CPU rendering)
             + xfwm4 + xfce4-panel + xfdesktop + thunar + xfce4-terminal
+          - Sound: virtual sound card drivers built-in for QEMU/virt-manager
+            (Intel HDA), VirtualBox (Intel HD Audio + ICH AC97) and VMware
+            (HD Audio + Ensoniq ES1371), plus QEMU AC97/ES1370; alsa-utils
+            (aplay / alsamixer / speaker-test) ships in the desktop pack -
+            after 'desktop', play: speaker-test -c 2 -t sine (CI verifies a
+            real playback through the emulated HDA card)
           - Network: Intel e1000/e1000e driver built-in, auto DHCP at boot, DNS 8.8.8.8
           - Keyboard/mouse: PS/2, USB HID, VMware vmmouse; libinput under X
           - Fixed: devpts now mounted at boot - xfce4-terminal could not
@@ -298,7 +313,8 @@ jobs:
             VirtualBox (vboxvideo + VMSVGA), plus a VESA/EFI framebuffer fallback
             (simpledrm) so the desktop also works with any other virtual GPU
           - RAM advice: 2 GB minimum (the whole system incl. the desktop lives in RAM)
-          - Boot test: passed headless in QEMU (incl. calc/about/network/desktop selftest)
+          - Boot test: passed headless in QEMU (incl. calc/about/network/
+            desktop selftest + real HDA sound playback test)
 
           How to use:
           1. Download gudao-linux-${KVER}.iso

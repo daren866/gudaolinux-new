@@ -54,6 +54,12 @@ PKGS=(
   shared-mime-info
   # fonts
   fonts-dejavu-core
+  # sound: ALSA userland for the built-in virtual sound cards
+  # (aplay/amixer/alsamixer/speaker-test/alsactl + the Front_Center test
+  # wav; libasound2 pulls in /usr/share/alsa/alsa.conf). The DRIVERS live
+  # in the kernel fragment (SND_HDA_INTEL / INTEL8X0 / ENS1370/1371) -
+  # the initramfs ships no modules.
+  alsa-utils
   # X diagnostics (xrandr / xwininfo / xdpyinfo)
   x11-utils
   x11-xserver-utils
@@ -111,6 +117,11 @@ test -f "$ROOT/usr/bin/glxinfo"         || { echo "FAIL: glxinfo missing";      
 test -f "$ROOT/usr/lib/x86_64-linux-gnu/xfce4/xfconf/xfconfd" || { echo "FAIL: xfconfd missing (xfce4-panel will not display!)"; exit 1; }
 test -f "$ROOT/usr/bin/xfsettingsd"     || { echo "FAIL: xfsettingsd missing";   exit 1; }
 test -f "$ROOT/usr/bin/update-mime-database" || { echo "FAIL: update-mime-database missing (image sniffing will break!)"; exit 1; }
+test -f "$ROOT/usr/bin/aplay"         || { echo "FAIL: aplay missing (no sound playback!)";  exit 1; }
+test -f "$ROOT/usr/sbin/alsactl"      || { echo "FAIL: alsactl missing (mixer init broken)"; exit 1; }
+test -f "$ROOT/usr/share/alsa/alsa.conf" || { echo "FAIL: alsa.conf missing (libasound2 config absent - aplay cannot open ANY pcm)"; exit 1; }
+test -f "$ROOT/usr/share/sounds/alsa/Front_Center.wav" || { echo "FAIL: Front_Center.wav missing (sound self-test would fail)"; exit 1; }
+echo "ALSA userland present (aplay/alsactl + alsa.conf + test wav)"
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/dri/ || true
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvmpipe backend) present"
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"
