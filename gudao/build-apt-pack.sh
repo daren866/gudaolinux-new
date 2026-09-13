@@ -41,6 +41,10 @@ PKGS=(
   init-system-helpers
   # start-stop-daemon for sysv-style maintainer scripts
   sysvinit-utils
+  # deb-systemd-helper / deb-systemd-invoke / update-rc.d (all shipped by
+  # init-system-helpers) are perl scripts using core modules only -
+  # perl-base makes them work for daemon-package postinsts
+  perl-base
 )
 
 echo ">>> preparing isolated apt environment (Debian trixie, download only)"
@@ -156,6 +160,16 @@ OPENSSL_BIN="$ROOT/usr/bin/openssl"
 HASHN=$(ls "$ROOT/etc/ssl/certs" | grep -cE '^[0-9a-f]{8}\.' || true)
 echo ">>> CA bundle: $(du -h "$ROOT/etc/ssl/certs/ca-certificates.crt" | cut -f1), $HASHN hash symlinks"
 
+echo ">>> disabling the debconf frontend (perl-based)"
+# debconf's confmodule execs /usr/share/debconf/frontend, a perl script -
+# and a source'd confmodule dying ENOENT kills the whole postinst with
+# exit 127 (this is what broke `apt install ed` configuring libc6).
+# Every maintainer script guards with `if [ -f .../confmodule ]`, so
+# without the file debconf is skipped cleanly and scripts just run.
+rm -rf "$ROOT/usr/share/debconf"
+test ! -e "$ROOT/usr/share/debconf/confmodule" \
+  || { echo "FAIL: debconf confmodule still present (postinsts would die 127)"; exit 1; }
+
 echo ">>> live-system policies"
 # never auto-start services while packages are being installed
 # (invoke-rc.d honours exit 101 as "action denied by policy")
@@ -188,6 +202,8 @@ test -L "$ROOT/lib64" \
   || { echo "FAIL: /lib64 usrmerge symlink missing (every dynamic binary would die ENOENT!)"; exit 1; }
 test -f "$ROOT/usr/sbin/ldconfig" \
   || { echo "FAIL: ldconfig missing (libc6 postinst will fail on runtime installs)"; exit 1; }
+test -f "$ROOT/usr/bin/perl" \
+  || { echo "FAIL: perl missing (deb-systemd-helper / update-rc.d are perl scripts)"; exit 1; }
 test -f "$ROOT/usr/share/keyrings/debian-archive-keyring.gpg" \
   || { echo "FAIL: debian archive keyring missing (apt update will fail signature check!)"; exit 1; }
 test -s "$ROOT/etc/ssl/certs/ca-certificates.crt" \
