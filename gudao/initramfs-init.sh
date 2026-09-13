@@ -58,6 +58,12 @@ if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
     chmod 1777 /tmp 2>/dev/null
     mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial /var/log/apt
     chown -R _apt:_apt /var/lib/apt/lists /var/cache/apt/archives /var/log/apt 2>/dev/null
+    # PATH shadow fix: busybox ships a minimal `dpkg` applet at /bin/dpkg
+    # which would shadow the real /usr/bin/dpkg (PATH=/bin first). The
+    # busybox applet rejects even `dpkg -s`; remove the shadow so the real
+    # package manager resolves. (CONFIG_DPKG is also disabled in the
+    # busybox build; this line keeps older initramfs images working.)
+    rm -f /bin/dpkg
 fi
 
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------
@@ -269,8 +275,8 @@ if grep -q 'gudao_apttest' /proc/cmdline 2>/dev/null; then
     fi
     echo "[apt] apt-get install ed (small editor, only libc dependency)..."
     if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ed >/var/log/apt-install.log 2>&1 \
-       && dpkg -s ed >/dev/null 2>&1 && [ -x /usr/bin/ed ]; then
-        echo "[apt] APT INSTALL: PASS ($(dpkg -s ed 2>/dev/null | grep '^Version:' | tr -d '\r'))"
+       && dpkg-query -s ed >/dev/null 2>&1 && [ -x /usr/bin/ed ]; then
+        echo "[apt] APT INSTALL: PASS ($(dpkg-query -s ed 2>/dev/null | grep '^Version:' | tr -d '\r'))"
     else
         echo "[apt] APT INSTALL: FAIL - log tail:"
         tail -15 /var/log/apt-install.log 2>/dev/null || true
@@ -291,7 +297,7 @@ if grep -q 'gudao_apttest' /proc/cmdline 2>/dev/null; then
     fi
     echo "[apt] apt-get remove ed..."
     if DEBIAN_FRONTEND=noninteractive apt-get remove -y ed >/var/log/apt-remove.log 2>&1 \
-       && ! dpkg -s ed >/dev/null 2>&1; then
+       && ! dpkg-query -s ed >/dev/null 2>&1 && [ ! -x /usr/bin/ed ]; then
         echo "[apt] APT REMOVE: PASS"
     else
         echo "[apt] APT REMOVE: FAIL - log tail:"

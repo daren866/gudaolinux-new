@@ -2,7 +2,7 @@
  * Automatically generated C config: don't edit
  * Busybox version: 1.36.1
  */
-#define AUTOCONF_TIMESTAMP "2026-09-12 03:05:34 UTC"
+#define AUTOCONF_TIMESTAMP "2026-09-13 05:52:28 UTC"
 
 #define CONFIG_HAVE_DOT_CONFIG 1
 #define ENABLE_HAVE_DOT_CONFIG 1
@@ -904,14 +904,10 @@
 # define IF_FEATURE_CPIO_RENUMBER_INODES(...) __VA_ARGS__
 #endif
 #define IF_NOT_FEATURE_CPIO_RENUMBER_INODES(...)
-#define CONFIG_DPKG 1
-#define ENABLE_DPKG 1
-#ifdef MAKE_SUID
-# define IF_DPKG(...) __VA_ARGS__ "CONFIG_DPKG"
-#else
-# define IF_DPKG(...) __VA_ARGS__
-#endif
-#define IF_NOT_DPKG(...)
+#undef CONFIG_DPKG
+#define ENABLE_DPKG 0
+#define IF_DPKG(...)
+#define IF_NOT_DPKG(...) __VA_ARGS__
 #define CONFIG_DPKG_DEB 1
 #define ENABLE_DPKG_DEB 1
 #ifdef MAKE_SUID

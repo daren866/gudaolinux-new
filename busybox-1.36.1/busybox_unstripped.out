@@ -703,7 +703,6 @@ archival/lib.a
 (archival/lib.a)bzip2.o
 (archival/lib.a)chksum_and_xwrite_tar_header.o
 (archival/lib.a)cpio.o
-(archival/lib.a)dpkg.o
 (archival/lib.a)dpkg_deb.o
 (archival/lib.a)gzip.o
 (archival/lib.a)lzop.o
@@ -1259,7 +1258,6 @@ attempt to open /usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.
 (/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)vtables.o
 (/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)feof_u.o
 (/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)ferror_u.o
-(/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)fputc_u.o
 (/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)getc_u.o
 (/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)getchar_u.o
 (/usr/lib/gcc/x86_64-linux-gnu/14/../../../x86_64-linux-gnu/libc.a)putc_u.o
