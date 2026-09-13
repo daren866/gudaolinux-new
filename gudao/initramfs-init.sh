@@ -268,10 +268,21 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
     # for QEMU/VBox HD-Audio/VMware, ICH AC97 for VirtualBox/QEMU, Ensoniq
     # ES1370/1371 for VMware/QEMU). Verify the card enumerates AND a test
     # wav actually plays through the ALSA stack.
-    if [ -s /proc/asound/cards ]; then
-        echo "[desktop] SOUND CARD: PASS ($(sed -n '2p' /proc/asound/cards | sed 's/^ *//' | tr -s ' '))"
+    # NOTE: never use [ -s /proc/... ] here - procfs files ALWAYS report
+    # st_size 0, so the check would fail even with the card fully up.
+    # And an empty card list still prints the literal "--- no soundcards ---",
+    # so grep for a REAL card line ("  0 [Intel  ]: HDA-Intel - ...") instead.
+    # The codec probe is an async workqueue, so give it a moment.
+    SWAIT=0
+    while [ $SWAIT -lt 15 ]; do
+        grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null && break
+        SWAIT=$((SWAIT+1))
+        sleep 1
+    done
+    if grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null; then
+        echo "[desktop] SOUND CARD: PASS ($(sed -n '1p' /proc/asound/cards | sed 's/^ *//' | tr -s ' '))"
     else
-        echo "[desktop] SOUND CARD: FAIL (/proc/asound/cards empty or missing)"
+        echo "[desktop] SOUND CARD: FAIL (no card listed in /proc/asound/cards)"
         echo "[desktop] /proc/asound: $(ls /proc/asound/ 2>/dev/null | tr '\n' ' ')"
         OK=0
     fi
@@ -284,11 +295,31 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
                 echo "[desktop] WARNING: mixer init failed (codec has no Master control?)"
             fi
         fi
-        if timeout 30 aplay -q /usr/share/sounds/alsa/Front_Center.wav 2>/tmp/aplay.err; then
-            echo "[desktop] SOUND PLAYBACK: PASS (Front_Center.wav via default PCM)"
+        # try the playback devices real users would use, first success wins.
+        # 'default' (dmix) / 'plughw' (auto params) / 'hw' (exact params).
+        P_OK=""
+        for DEV in default plughw:0,0 hw:0,0; do
+            if timeout 30 aplay -q -D "$DEV" /usr/share/sounds/alsa/Front_Center.wav 2>/tmp/aplay.err; then
+                P_OK="$DEV"
+                break
+            fi
+            echo "[desktop] aplay -D $DEV failed: $(tr '\n' ';' < /tmp/aplay.err | head -c 300)"
+        done
+        if [ -n "$P_OK" ]; then
+            if [ "$P_OK" = "default" ]; then
+                echo "[desktop] SOUND PLAYBACK: PASS (Front_Center.wav via default PCM)"
+            else
+                echo "[desktop] SOUND PLAYBACK: PASS (Front_Center.wav via $P_OK - 'default' device FAILED, see aplay errors above)"
+            fi
         else
-            echo "[desktop] SOUND PLAYBACK: FAIL - aplay reports:"
-            head -6 /tmp/aplay.err 2>/dev/null || true
+            echo "[desktop] SOUND PLAYBACK: FAIL on all devices - ALSA state:"
+            echo "[desktop] /proc/asound/cards: $(sed -n '1,4p' /proc/asound/cards 2>/dev/null | tr '\n' '|')"
+            echo "[desktop] /proc/asound/pcm: $(cat /proc/asound/pcm 2>/dev/null | tr '\n' '|')"
+            echo "[desktop] /proc/asound/card0: $(ls /proc/asound/card0/ 2>/dev/null | tr '\n' ' ')"
+            echo "[desktop] /dev/snd: $(ls /dev/snd/ 2>/dev/null | tr '\n' ' ')"
+            echo "[desktop] aplay -l: $(aplay -l 2>&1 | tr '\n' '|' | head -c 400)"
+            echo "[desktop] kernel sound messages:"
+            dmesg 2>/dev/null | grep -iE 'hda|snd|codec' | tail -12 | sed 's/^/[desktop]   /'
             OK=0
         fi
     else
