@@ -15,7 +15,8 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 键盘 | 基础键盘驱动：PS/2（i8042 + atkbd）与 USB（xHCI/EHCI/UHCI + usbhid），全部内建 |
 | 网络 | Intel e1000/e1000e 网卡驱动内建；**开机自动 DHCP 分配 IP**，DNS 固定为 `8.8.8.8` |
 | 包管理 | **apt + dpkg 开机即用**，默认源为清华 TUNA（trixie + updates/backports + security），可在运行时安装/卸载软件（装在 RAM，重启后消失） |
-| 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal**；libinput 输入管理 |
+| 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal → pnmixer**；libinput 输入管理 |
+| 声音 | QEMU/VMware/VirtualBox 虚拟声卡驱动全内建（Intel HDA、ICH AC97、ES1370/1371）；开机自动解除混音器静音（`sound-init`），面板托盘 **pnmixer** 调音量 |
 | 图形驱动 | 内建：QEMU（bochs/cirrus/virtio-gpu）、VMware（vmwgfx + vmmouse）、VirtualBox（vboxvideo）；VESA fb 兜底 |
 | 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
 | CI | GitHub Actions：内核 → busybox → 桌面包 → initramfs → QEMU 冒烟测试（含桌面自测） → ISO → Release |
@@ -95,6 +96,8 @@ desktop: loading xfce4-panel...
 desktop: loading xfdesktop (desktop layer)...
 desktop: loading thunar (file manager, daemon mode)...
 desktop: loading xfce4-terminal...
+
+  Desktop is up: ... + pnmixer (volume)
 ```
 
 启动顺序与组件：
@@ -102,10 +105,11 @@ desktop: loading xfce4-terminal...
 1. **Xorg** — 内核 bochs/vmwgfx/vboxvideo DRM 或 VESA fb 驱动，`LIBGL_ALWAYS_SOFTWARE=1`
    强制 **Mesa llvmpipe CPU 渲染**（无需 GPU）；
 2. **xfwm4** — 窗口管理器（关闭合成器，纯 CPU 友好）；
-3. **xfce4-panel** — 顶栏（应用菜单/任务列表/时钟）；
+3. **xfce4-panel** — 顶栏（应用菜单/任务列表/托盘/时钟）；
 4. **xfdesktop** — 桌面背景、桌面图标与右键菜单；
 5. **thunar** — 文件管理器（守护模式随桌面启动，双击桌面图标即可打开）；
-6. **xfce4-terminal** — 自动打开一个终端窗口。
+6. **xfce4-terminal** — 自动打开一个终端窗口；
+7. **pnmixer** — 面板托盘音量控件（检测到声卡后自动启动）。
 
 技术实现：
 
@@ -114,7 +118,29 @@ desktop: loading xfce4-terminal...
   解压到根（tmpfs），并排除 resolv.conf/hosts/passwd 等基础文件防覆盖；
 - 输入：**libinput** + udev（udevd 启动后供 libinput 枚举设备），PS/2 / USB HID /
   VMware vmmouse 鼠标键盘均可；
-- **内存建议 ≥ 2 GB**（整个系统连同桌面全部驻留 RAM，桌面包解压后约 500 MB）。
+- **内存建议 ≥ 2 GB**（整个系统连同桌面全部驻留 RAM，桌面包解压后约 550 MB）。
+
+### 声音（音量调节与输出）
+
+- **内核驱动全内建**（无模块即无加载失败面），覆盖主流虚拟机默认声卡：
+
+  | 平台 | 仿真声卡 | 内建驱动 |
+  |------|----------|----------|
+  | QEMU/virt-manager 默认 | Intel HDA + hda-duplex | SND_HDA_INTEL + SND_HDA_GENERIC |
+  | QEMU AC97 / VBox ICH AC97 | ICH AC97 | SND_INTEL8X0 + SND_AC97_CODEC |
+  | QEMU ES1370 | Ensoniq ES1370 | SND_ENS1370 |
+  | VBox 默认 HD Audio | Intel HD Audio | SND_HDA_INTEL |
+  | VMware 默认 | ES1371 / HD Audio | SND_ENS1371 / SND_HDA_INTEL |
+
+- **开机自动解除静音**：HDA/AC97 codec 上电默认静音或零音量，`desktop`
+  启动时后台执行 **`sound-init`**（等卡片注册 → `alsactl init` 解除静音并设
+  音量 → amixer 兜底），日志在 `/var/log/sound-init.log`；
+- **音量调节**：面板托盘 **pnmixer**（左键滑条/滚轮调节，中键静音，右键
+  选择声卡与打开 alsamixer）——前提是 VM 里真的有声卡（QEMU 必须显式加
+  `-device intel-hda -device hda-duplex`，见上节启动命令）；
+- **排查**：控制台敲 `sound-init` 重放混音器初始化；
+  `aplay /usr/share/sounds/alsa/Front_Center.wav` 实听测试；
+  `cat /proc/asound/cards` 看卡片是否注册（空 → VM 没接声卡设备）。
 
 ## 自动构建
 
@@ -144,15 +170,25 @@ make -j"$(nproc)" bzImage
 ### QEMU（最快验证）
 
 ```bash
-qemu-system-x86_64 -m 512M -cdrom GudaoLinux-*.iso
+# 带声音输出（Linux 宿主 PulseAudio/PipeWire，桌面场景内存建议 2G）:
+qemu-system-x86_64 -m 2G -enable-kvm -cdrom GudaoLinux-*.iso \
+  -audiodev pa,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0
+# 无宿主音频（仅验证驱动/播放路径，CI 同款）:
+qemu-system-x86_64 -m 2G -cdrom GudaoLinux-*.iso \
+  -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0
 # 串口调试:
-qemu-system-x86_64 -m 512M -nographic -cdrom GudaoLinux-*.iso
+qemu-system-x86_64 -m 2G -nographic -cdrom GudaoLinux-*.iso
 # 然后在 GRUB 菜单选 "serial console ttyS0" 启动项
 ```
 
+> 声卡设备必须显式指定：QEMU 6+ 默认**不带任何音频设备**，缺上面的
+> `-device intel-hda -device hda-duplex` 参数时 VM 里根本没有声卡，
+> 面板托盘也不会出现音量控件。
+
 ### 真机 / 虚拟机
 
-- VirtualBox / VMware：直接挂载 ISO 启动
+- VirtualBox / VMware：直接挂载 ISO 启动；若无声，请确认虚拟机设置里**声卡已启用**
+  （VMware: 虚拟机设置 → 声卡；VirtualBox: 设置 → 音频 → 启用音频）
 - 物理机 U 盘：`dd if=GudaoLinux-*.iso of=/dev/sdX bs=4M status=progress && sync`
 - UEFI 机器如遇启动问题请在固件中**关闭 Secure Boot**（内核未签名）
 

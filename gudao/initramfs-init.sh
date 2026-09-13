@@ -287,13 +287,15 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
         OK=0
     fi
     if [ -x /usr/bin/aplay ] && [ -f /usr/share/sounds/alsa/Front_Center.wav ]; then
-        # apply the standard mixer rules (unmute + sane levels); a codec
-        # without the expected controls only draws a WARNING - what counts
-        # is the playback assertion below
-        if ! alsactl init >/dev/null 2>&1; then
-            if ! amixer sset Master 100% unmute >/dev/null 2>&1; then
-                echo "[desktop] WARNING: mixer init failed (codec has no Master control?)"
-            fi
+        # shared mixer init (unmute + sane levels) - the very same script
+        # the desktop session backgrounds at startup, so CI verifies what
+        # real users get; a codec without the expected controls only draws
+        # a WARNING - what counts is the playback assertion below
+        /usr/bin/sound-init || true
+        if amixer get Master 2>/dev/null | grep -q '\[on\]'; then
+            echo "[desktop] MIXER MASTER: PASS (unmuted)"
+        else
+            echo "[desktop] MIXER MASTER: WARNING (Master not 'on' - codec may name it differently)"
         fi
         # try the playback devices real users would use, first success wins.
         # 'default' (dmix) / 'plughw' (auto params) / 'hw' (exact params).
@@ -324,6 +326,21 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
         fi
     else
         echo "[desktop] SOUND PLAYBACK: FAIL (aplay or test wav missing - alsa-utils broken in the desktop pack?)"
+        OK=0
+    fi
+    # volume control applet: the desktop session starts pnmixer (tray
+    # mixer) once a card registers - verify the process is actually alive
+    # so the panel tray really has a volume control for the user
+    A_OK=0
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        pgrep -x pnmixer >/dev/null 2>&1 && A_OK=1 && break
+        sleep 1
+    done
+    if [ "$A_OK" = "1" ]; then
+        echo "[desktop] VOLUME APPLET: PASS (pnmixer running)"
+    else
+        echo "[desktop] VOLUME APPLET: FAIL (pnmixer not running - tray has no volume control)"
+        echo "[desktop] pnmixer log tail: $(tail -3 /var/log/pnmixer.log 2>/dev/null | tr '\n' ';')"
         OK=0
     fi
     echo "[desktop] Xorg log tail:"
@@ -453,7 +470,7 @@ echo
 echo "  Welcome to Gudao Linux"
 echo "  Kernel : $(uname -s) $(uname -r)"
 echo "  Shell  : busybox ash   (type 'help' to list all applets)"
-echo "  Extras : calc <expr>  |  about  |  desktop  |  apt install <pkg>"
+echo "  Extras : calc <expr>  |  about  |  desktop  |  sound-init  |  apt install <pkg>"
 echo "  Network: $NET_LINE"
 echo "  System : live in RAM - nothing persists across reboot"
 echo

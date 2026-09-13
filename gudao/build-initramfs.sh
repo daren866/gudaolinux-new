@@ -129,6 +129,12 @@ if [ ! -S /run/dbus/system_bus_socket ]; then
     dbus-daemon --system --fork >/dev/null 2>&1 || true
 fi
 
+# 2c. sound: HDA/AC97 codecs power up MUTED, so nothing would be audible
+#     until the mixer is initialized. sound-init waits for the card and
+#     applies Debian's standard unmute+levels rules; backgrounded so a
+#     slow codec probe never delays the X session. Log: sound-init.log
+/usr/bin/sound-init >/var/log/sound-init.log 2>&1 &
+
 # 3. runtime dirs + dbus + Mesa CPU rendering (llvmpipe)
 # /bin/busybox prefix: the desktop pack may or may not ship coreutils, so
 # the real mkdir/chmod/mount may exist only as the (re-created) busybox
@@ -191,6 +197,26 @@ thunar --daemon >/var/log/thunar.log 2>&1 &
 echo "desktop: loading xfce4-terminal..."
 xfce4-terminal >/var/log/xfce4-terminal.log 2>&1 &
 
+# 5b. volume control applet (tray mixer, ALSA backend): left-click drag
+#     the slider / scroll-wheel to change volume, right-click opens the
+#     mixer menu (alsamixer in a terminal). Started once a sound card
+#     actually registers - without a card the applet would only warn.
+if [ -x /usr/bin/pnmixer ]; then
+    (
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null && break
+            sleep 1
+        done
+        if grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null; then
+            exec /usr/bin/pnmixer
+        else
+            echo "pnmixer: no sound card detected - volume applet not started (run 'sound-init' after attaching one)"
+        fi
+    ) >/var/log/pnmixer.log 2>&1 &
+else
+    echo "desktop: WARNING - pnmixer missing from the desktop pack (no volume control)"
+fi
+
 # 6. verify the panel window is actually mapped on the screen (the process
 #    can be alive while its window never shows - verify the real thing)
 PANEL_OK=0
@@ -209,11 +235,108 @@ fi
 
 echo
 echo "  Desktop is up: Xorg (Mesa llvmpipe) + xfwm4 + xfce4-panel + xfdesktop"
-echo "                  + thunar (file manager) + xfce4-terminal"
+echo "                  + thunar (file manager) + xfce4-terminal + pnmixer (volume)"
 echo "  Look at the GUI display of your VM / machine (vt1)."
+echo "  Sound: volume slider in the panel tray; sound-init re-runs mixer init."
 echo
 EOF
 chmod 755 "$ROOT/usr/bin/desktop"
+
+# ---- the `sound-init` command (ALSA mixer bring-up) ----
+# HDA/AC97 codecs power up muted; without this, a freshly booted VM is
+# silent even though the card and playback path are perfectly fine
+# (Run#31 CI passed aplay while the user's real VM stayed silent).
+# The desktop launcher backgrounds it at session start; it is also a
+# standalone console command for manual re-runs.
+cat > "$ROOT/usr/bin/sound-init" <<'EOF'
+#!/bin/sh
+# ------------------------------------------------------------
+# Gudao Linux sound-init: bring the ALSA mixer of the (emulated)
+# sound card into a sane audible state.
+#
+# HDA and AC97 codecs power up with outputs MUTED or at volume 0,
+# so a freshly booted VM is silent until something unmutes the
+# mixer. This script does exactly that:
+#   1. wait for a card to register (the HDA codec probe runs on an
+#      async workqueue and may lag the boot by a few seconds)
+#   2. alsactl init - Debian's standard per-card mixer rules
+#      (unmute + sane levels for Master/PCM/Front/...)
+#   3. amixer fallback for codecs the rules did not cover
+#
+# The desktop launcher backgrounds it at session start (log:
+# /var/log/sound-init.log); it can also be run by hand at any
+# time from the console:  sound-init
+# ------------------------------------------------------------
+LOG_TAG="sound-init"
+say() { echo "[$LOG_TAG] $*"; }
+
+# /var/lib/alsa: alsactl state/lock directory
+/bin/busybox mkdir -p /var/lib/alsa 2>/dev/null
+
+# 1. wait up to 10s for a real card line ("  0 [Intel  ]: HDA-Intel - ...").
+#    procfs files always report st_size 0 and an empty card list still
+#    contains the literal "--- no soundcards ---", so never test file
+#    size or emptiness here - match the card line itself.
+W=0
+while [ $W -lt 10 ]; do
+    grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null && break
+    W=$((W+1))
+    sleep 1
+done
+if ! grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null; then
+    say "no sound card in /proc/asound/cards (VM has no audio device?)"
+    say "QEMU: add  -device intel-hda -device hda-duplex  (see README-GUDAO.md)"
+    exit 1
+fi
+say "card detected: $(sed -n 's/^ *//;1p' /proc/asound/cards | tr -s ' ')"
+
+# 2. alsactl init (ships in /usr/sbin of the desktop pack; before the
+#    pack is unpacked the tool simply is not there yet - say so)
+ALSACTL=""
+[ -x /usr/sbin/alsactl ] && ALSACTL=/usr/sbin/alsactl
+[ -z "$ALSACTL" ] && ALSACTL=$(command -v alsactl 2>/dev/null)
+INIT_OK=0
+if [ -n "$ALSACTL" ] && [ -x "$ALSACTL" ]; then
+    if "$ALSACTL" init >/var/log/alsactl-init.log 2>&1; then
+        INIT_OK=1
+        say "alsactl init applied (unmute + levels, see /var/log/alsactl-init.log)"
+    else
+        say "alsactl init failed (rc=$?) - falling back to amixer"
+    fi
+else
+    say "alsactl not available yet (unpack the desktop pack first: run 'desktop') - falling back to amixer"
+fi
+
+# 3. amixer fallback: only when alsactl's rules could not run - setting
+#    100% on top of a successful alsactl init would needlessly blast
+#    full volume. Controls missing on a codec just draw errors we ignore.
+if [ "$INIT_OK" = "0" ]; then
+    AMIXER=$(command -v amixer 2>/dev/null)
+    if [ -n "$AMIXER" ]; then
+        for CTL in Master PCM Front Speaker Headphone; do
+            "$AMIXER" sset "$CTL" 90% unmute >/dev/null 2>&1 || true
+        done
+        say "amixer fallback applied (Master/PCM/Front/Speaker/Headphone 90% unmute)"
+    else
+        say "amixer not available either - mixer left at codec defaults"
+    fi
+fi
+
+# 4. report the state the user should hear
+if command -v amixer >/dev/null 2>&1; then
+    if amixer get Master 2>/dev/null | grep -q '\[on\]'; then
+        say "mixer state: Master unmuted (on) - sound should be audible now"
+    else
+        say "mixer state: Master control not found or still muted (codec may name it differently - try 'alsamixer')"
+    fi
+fi
+say "done (test playback: aplay /usr/share/sounds/alsa/Front_Center.wav)"
+exit 0
+EOF
+chmod 755 "$ROOT/usr/bin/sound-init"
+# guard: the mixer bring-up script MUST exist or every boot stays silent
+test -x "$ROOT/usr/bin/sound-init" \
+    || { echo "FAIL: sound-init not generated (mixer would stay muted)"; exit 1; }
 
 # ---- embed the apt pack if it has been built ----
 # (package manager: apt+dpkg unpacked by /init at every boot, see
