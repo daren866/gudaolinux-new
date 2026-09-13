@@ -242,7 +242,16 @@ cat > "$ROOT/etc/group" <<'EOF'
 root:x:0:
 _apt:x:100:
 nogroup:x:65534:
+audio:x:29:
 EOF
+# the audio group is REQUIRED by ALSA dmix: the 'default' pcm maps to dmix
+# whose ipc_gid field resolves to the 'audio' group - without the group,
+# every playback through 'default' dies with
+#   "The field ipc_gid must be a valid group (create group audio)"
+# (Debian normally ships the group via base-passwd, which is not in our
+# minimal closure). gid 29 is the Debian-standard audio group id.
+grep -q '^audio:' "$ROOT/etc/group" \
+    || { echo "FAIL: audio group missing (ALSA 'default'/dmix needs ipc_gid audio)"; exit 1; }
 cat > "$ROOT/etc/hosts" <<'EOF'
 127.0.0.1 localhost gudao
 ::1 localhost ip6-localhost ip6-loopback
