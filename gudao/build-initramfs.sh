@@ -18,6 +18,11 @@ echo ">>> using busybox: $BB"
 
 rm -rf "$ROOT"
 mkdir -p "$ROOT"/{bin,sbin,etc,proc,sys,dev,tmp,mnt,root,run,usr/bin,usr/sbin,opt,var/log,var/lib/dbus,var/lib/xkb,var/cache}
+# /tmp MUST be world-writable (1777): apt's fetch sandbox drops privileges
+# to the _apt user and its gpgv verification does mkstemp(/tmp/apt.sig.*)
+# - a 755 /tmp makes every signature check fail with EACCES ("repository
+# is not signed") even though the download itself succeeded
+chmod 1777 "$ROOT/tmp"
 
 cp "$BB" "$ROOT/bin/busybox"
 chmod 755 "$ROOT/bin/busybox"

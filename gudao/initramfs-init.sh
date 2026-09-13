@@ -50,6 +50,14 @@ if [ -f /opt/apt-pack.tar.gz ] && [ ! -x /usr/bin/apt-get ]; then
     else
         echo "gudao: ERROR - /usr/bin/apt-get missing after unpack, apt unavailable"
     fi
+    # apt fetch sandbox (user _apt) requirements, enforced at boot:
+    # - /tmp world-writable, else gpgv mkstemp(/tmp/apt.sig.*) fails EACCES
+    #   and every repo is declared "not signed" despite successful downloads
+    # - _apt-owned lists/archives partial dirs, else downloads either fail
+    #   or fall back to unsandboxed-root mode
+    chmod 1777 /tmp 2>/dev/null
+    mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial /var/log/apt
+    chown -R _apt:_apt /var/lib/apt/lists /var/cache/apt/archives /var/log/apt 2>/dev/null
 fi
 
 # --- network bring-up: e1000 NIC + DHCP + DNS 8.8.8.8 ---------
