@@ -15,8 +15,8 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 键盘 | 基础键盘驱动：PS/2（i8042 + atkbd）与 USB（xHCI/EHCI/UHCI + usbhid），全部内建 |
 | 网络 | Intel e1000/e1000e 网卡驱动内建；**开机自动 DHCP 分配 IP**，DNS 固定为 `8.8.8.8` |
 | 包管理 | **apt + dpkg 开机即用**，默认源为清华 TUNA（trixie + updates/backports + security），可在运行时安装/卸载软件（装在 RAM，重启后消失） |
-| 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal → pnmixer**；libinput 输入管理 |
-| 声音 | QEMU/VMware/VirtualBox 虚拟声卡驱动全内建（Intel HDA、ICH AC97、ES1370/1371）；开机自动解除混音器静音（`sound-init`），面板托盘 **pnmixer** 调音量 |
+| 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal → volumeicon**；libinput 输入管理 |
+| 声音 | QEMU/VMware/VirtualBox 虚拟声卡驱动全内建（Intel HDA、ICH AC97、ES1370/1371）；开机自动解除混音器静音（`sound-init`），面板托盘 **volumeicon** 调音量 |
 | 图形驱动 | 内建：QEMU（bochs/cirrus/virtio-gpu）、VMware（vmwgfx + vmmouse）、VirtualBox（vboxvideo）；VESA fb 兜底 |
 | 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
 | CI | GitHub Actions：内核 → busybox → 桌面包 → initramfs → QEMU 冒烟测试（含桌面自测） → ISO → Release |
@@ -97,7 +97,7 @@ desktop: loading xfdesktop (desktop layer)...
 desktop: loading thunar (file manager, daemon mode)...
 desktop: loading xfce4-terminal...
 
-  Desktop is up: ... + pnmixer (volume)
+  Desktop is up: ... + volumeicon (volume)
 ```
 
 启动顺序与组件：
@@ -109,7 +109,7 @@ desktop: loading xfce4-terminal...
 4. **xfdesktop** — 桌面背景、桌面图标与右键菜单；
 5. **thunar** — 文件管理器（守护模式随桌面启动，双击桌面图标即可打开）；
 6. **xfce4-terminal** — 自动打开一个终端窗口；
-7. **pnmixer** — 面板托盘音量控件（检测到声卡后自动启动）。
+7. **volumeicon** — 面板托盘音量控件（检测到声卡后自动启动）。
 
 技术实现：
 
@@ -135,12 +135,17 @@ desktop: loading xfce4-terminal...
 - **开机自动解除静音**：HDA/AC97 codec 上电默认静音或零音量，`desktop`
   启动时后台执行 **`sound-init`**（等卡片注册 → `alsactl init` 解除静音并设
   音量 → amixer 兜底），日志在 `/var/log/sound-init.log`；
-- **音量调节**：面板托盘 **pnmixer**（左键滑条/滚轮调节，中键静音，右键
-  选择声卡与打开 alsamixer）——前提是 VM 里真的有声卡（QEMU 必须显式加
+- **音量调节**：面板托盘 **volumeicon**（左键弹滑条/滚轮调节，中键静音，右键
+  菜单可开 alsamixer）——前提是 VM 里真的有声卡（QEMU 必须显式加
   `-device intel-hda -device hda-duplex`，见上节启动命令）；
-- **排查**：控制台敲 `sound-init` 重放混音器初始化；
+- **排查**：控制台敲 `sound-init` 重放混音器初始化并输出诊断（卡片、
+  Master 状态、aplay -l、PCM 列表）；
   `aplay /usr/share/sounds/alsa/Front_Center.wav` 实听测试；
   `cat /proc/asound/cards` 看卡片是否注册（空 → VM 没接声卡设备）。
+  **guest/宿主侧判定**：若 `aplay` 播放成功但 VM 仍无声，guest 侧已正常
+  （音频数据已交给内核声卡），问题在宿主侧——QEMU 缺 `-audiodev` 或后端
+  配置错误（QEMU 8+ 无 audiodev 时默认丢弃音频）、VMware/VBox 声卡设置
+  未启用或宿主音量静音。
 
 ## 自动构建
 

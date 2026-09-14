@@ -60,11 +60,14 @@ PKGS=(
   # in the kernel fragment (SND_HDA_INTEL / INTEL8X0 / ENS1370/1371) -
   # the initramfs ships no modules.
   alsa-utils
-  # sound: pnmixer = ALSA tray volume applet (GTK3, XEmbed). The panel's
-  # default layout ships a systray plugin, so the icon just appears;
-  # left-click slider / scroll-wheel volume, right-click mixer menu.
-  # PulseAudio-based applets (xfce4-pulseaudio-plugin) need PA - not used.
-  pnmixer
+  # sound: volumeicon = ALSA tray volume applet (GTK3, XEmbed). Replaces
+  # pnmixer 0.7.2 which aborts in vol_meter_draw (Debian bug #922932:
+  # "assertion failed: (y >= 0 && ...)" in ui-tray-icon.c) whenever the
+  # volume changes on codecs WITHOUT dB info (QEMU hda-duplex reports
+  # "Can't get playback dB range: Invalid argument") - i.e. touching the
+  # slider kills the applet instantly. volumeicon has no meter-assertion
+  # logic; its config is a plain keyfile we preseed at session start.
+  volumeicon-alsa
   # X diagnostics (xrandr / xwininfo / xdpyinfo)
   x11-utils
   x11-xserver-utils
@@ -127,11 +130,11 @@ test -f "$ROOT/usr/sbin/alsactl"      || { echo "FAIL: alsactl missing (mixer in
 test -f "$ROOT/usr/share/alsa/alsa.conf" || { echo "FAIL: alsa.conf missing (libasound2 config absent - aplay cannot open ANY pcm)"; exit 1; }
 test -f "$ROOT/usr/share/sounds/alsa/Front_Center.wav" || { echo "FAIL: Front_Center.wav missing (sound self-test would fail)"; exit 1; }
 test -f "$ROOT/usr/share/alsa/init/00main" || { echo "FAIL: alsa init rules missing (alsactl init cannot unmute the codec!)"; exit 1; }
-test -f "$ROOT/usr/bin/pnmixer"       || { echo "FAIL: pnmixer missing (no volume control applet in the panel tray!)"; exit 1; }
-test -f "$ROOT/usr/lib/x86_64-linux-gnu/libnotify.so.4" || { echo "FAIL: libnotify.so.4 missing (pnmixer depends on it and will not start!)"; exit 1; }
-test -f "$ROOT/usr/lib/x86_64-linux-gnu/xfce4/panel/plugins/libsystray.so" || { echo "FAIL: xfce4-panel systray plugin missing (pnmixer tray icon would never show!)"; exit 1; }
+test -f "$ROOT/usr/bin/volumeicon"       || { echo "FAIL: volumeicon missing (no volume control applet in the panel tray!)"; exit 1; }
+test -f "$ROOT/usr/lib/x86_64-linux-gnu/libnotify.so.4" || { echo "FAIL: libnotify.so.4 missing (volumeicon depends on it and will not start!)"; exit 1; }
+test -f "$ROOT/usr/lib/x86_64-linux-gnu/xfce4/panel/plugins/libsystray.so" || { echo "FAIL: xfce4-panel systray plugin missing (volumeicon tray icon would never show!)"; exit 1; }
 echo "ALSA userland present (aplay/alsactl/alsa.conf/test wav/init rules)"
-echo "Volume applet present (pnmixer + libnotify4 + panel systray plugin)"
+echo "Volume applet present (volumeicon + libnotify4 + panel systray plugin)"
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/dri/ || true
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvmpipe backend) present"
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"

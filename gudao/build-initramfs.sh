@@ -197,24 +197,50 @@ thunar --daemon >/var/log/thunar.log 2>&1 &
 echo "desktop: loading xfce4-terminal..."
 xfce4-terminal >/var/log/xfce4-terminal.log 2>&1 &
 
-# 5b. volume control applet (tray mixer, ALSA backend): left-click drag
-#     the slider / scroll-wheel to change volume, right-click opens the
-#     mixer menu (alsamixer in a terminal). Started once a sound card
-#     actually registers - without a card the applet would only warn.
-if [ -x /usr/bin/pnmixer ]; then
+# 5b. volume control applet (tray mixer, ALSA backend): left-click popup
+#     slider / scroll-wheel volume, right-click menu (mixer + preferences).
+#     applet = volumeicon (pnmixer 0.7.2 aborts in vol_meter_draw, Debian
+#     bug #922932, on codecs without dB info - QEMU hda-duplex - as soon
+#     as the volume changes; volumeicon has no such assertion).
+#     Preseed its config FIRST: without one it pops a setup dialog on
+#     start, and the default lmb_slider=false + onclick=xterm would make
+#     the left click useless (xterm is not shipped). Started once a sound
+#     card actually registers - without a card the applet would only warn.
+if [ -x /usr/bin/volumeicon ]; then
     (
         for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
             grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null && break
             sleep 1
         done
         if grep -qE '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null; then
-            exec /usr/bin/pnmixer
+            /bin/busybox mkdir -p /root/.config/volumeicon
+            /bin/busybox cat > /root/.config/volumeicon/volumeicon <<'VICFG'
+[Alsa]
+card=default
+channel=Master
+logarithmic_scale=false
+
+[Notification]
+show_notification=false
+notification_type=0
+
+[StatusIcon]
+stepsize=5
+onclick=xfce4-terminal -x alsamixer
+theme=tango
+use_panel_specific_icons=true
+lmb_slider=true
+mmb_mute=true
+use_horizontal_slider=false
+use_transparent_background=false
+VICFG
+            exec /usr/bin/volumeicon
         else
-            echo "pnmixer: no sound card detected - volume applet not started (run 'sound-init' after attaching one)"
+            echo "volumeicon: no sound card detected - volume applet not started (run 'sound-init' after attaching one)"
         fi
-    ) >/var/log/pnmixer.log 2>&1 &
+    ) >/var/log/volumeicon.log 2>&1 &
 else
-    echo "desktop: WARNING - pnmixer missing from the desktop pack (no volume control)"
+    echo "desktop: WARNING - volumeicon missing from the desktop pack (no volume control)"
 fi
 
 # 6. verify the panel window is actually mapped on the screen (the process
@@ -235,7 +261,7 @@ fi
 
 echo
 echo "  Desktop is up: Xorg (Mesa llvmpipe) + xfwm4 + xfce4-panel + xfdesktop"
-echo "                  + thunar (file manager) + xfce4-terminal + pnmixer (volume)"
+echo "                  + thunar (file manager) + xfce4-terminal + volumeicon (volume)"
 echo "  Look at the GUI display of your VM / machine (vt1)."
 echo "  Sound: volume slider in the panel tray; sound-init re-runs mixer init."
 echo
@@ -322,15 +348,27 @@ if [ "$INIT_OK" = "0" ]; then
     fi
 fi
 
-# 4. report the state the user should hear
+# 4. report the state the user should hear + dump the evidence needed to
+#    split "guest broken" from "host/VM backend silent":
+#      - amixer get Master  -> mixer open/unmuted with a real level?
+#      - aplay -l           -> which card/codec did the kernel register?
+#    If playback through 'default' succeeds (run the aplay below) but the
+#    VM is still silent, the guest side is DONE - the audio data reached
+#    the kernel driver - and the problem is on the host side (QEMU:
+#    missing -audiodev or backend, host output device; VMware/VBox: sound
+#    card disabled in the VM settings or host muted).
 if command -v amixer >/dev/null 2>&1; then
     if amixer get Master 2>/dev/null | grep -q '\[on\]'; then
         say "mixer state: Master unmuted (on) - sound should be audible now"
     else
         say "mixer state: Master control not found or still muted (codec may name it differently - try 'alsamixer')"
     fi
+    say "mixer dump: [$(amixer get Master 2>/dev/null | tr '\n' '|' | head -c 300)]"
+    say "aplay -l:   [$(aplay -l 2>&1 | tr '\n' '|' | head -c 300)]"
+    say "PCM devices:[$(cat /proc/asound/pcm 2>/dev/null | tr '\n' '|' | head -c 200)]"
 fi
 say "done (test playback: aplay /usr/share/sounds/alsa/Front_Center.wav)"
+say "if playback succeeds but the VM is still silent -> guest is fine, check the HOST side (QEMU -audiodev / VM sound card settings / host volume)"
 exit 0
 EOF
 chmod 755 "$ROOT/usr/bin/sound-init"

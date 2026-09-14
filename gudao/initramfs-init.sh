@@ -328,19 +328,19 @@ if grep -q 'gudao_desktoptest' /proc/cmdline 2>/dev/null; then
         echo "[desktop] SOUND PLAYBACK: FAIL (aplay or test wav missing - alsa-utils broken in the desktop pack?)"
         OK=0
     fi
-    # volume control applet: the desktop session starts pnmixer (tray
+    # volume control applet: the desktop session starts volumeicon (tray
     # mixer) once a card registers - verify the process is actually alive
     # so the panel tray really has a volume control for the user
     A_OK=0
     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-        pgrep -x pnmixer >/dev/null 2>&1 && A_OK=1 && break
+        pgrep -x volumeicon >/dev/null 2>&1 && A_OK=1 && break
         sleep 1
     done
     if [ "$A_OK" = "1" ]; then
-        echo "[desktop] VOLUME APPLET: PASS (pnmixer running)"
+        echo "[desktop] VOLUME APPLET: PASS (volumeicon running)"
     else
-        echo "[desktop] VOLUME APPLET: FAIL (pnmixer not running - tray has no volume control)"
-        echo "[desktop] pnmixer log tail: $(tail -3 /var/log/pnmixer.log 2>/dev/null | tr '\n' ';')"
+        echo "[desktop] VOLUME APPLET: FAIL (volumeicon not running - tray has no volume control)"
+        echo "[desktop] volumeicon log tail: $(tail -3 /var/log/volumeicon.log 2>/dev/null | tr '\n' ';')"
         OK=0
     fi
     echo "[desktop] Xorg log tail:"
