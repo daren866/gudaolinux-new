@@ -190,6 +190,41 @@ if grep -q 'gudao_selftest' /proc/cmdline 2>/dev/null; then
     poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
 fi
 
+# --- CI installer self-test (kernel cmdline: gudao_installtest=/dev/vdX) ---
+# installs the running live system onto the given target disk (the CI
+# attaches the built ISO as -cdrom as the source medium and a blank raw
+# disk as the target), then powers off. A separate QEMU step then boots
+# FROM THE INSTALLED DISK (no -kernel/-initrd) and verifies the real
+# GRUB -> kernel -> /sbin/init-gudao chain.
+if grep -q 'gudao_installtest' /proc/cmdline 2>/dev/null; then
+    IDISK=""
+    IUFI=0
+    ISER=0
+    for w in $(cat /proc/cmdline); do
+        case "$w" in
+            gudao_installtest=*) IDISK="${w#*=}" ;;
+            gudao_install_uefi)  IUFI=1 ;;
+            gudao_install_serial) ISER=1 ;;
+        esac
+    done
+    [ -n "$IDISK" ] || IDISK=/dev/vda
+    echo "[install] auto-installing to $IDISK (persistent install) ..."
+    EXTRA=""
+    [ "$IUFI" = "1" ] && EXTRA="$EXTRA --target-uefi"
+    [ "$ISER" = "1" ] && EXTRA="$EXTRA --serial-console"
+    if install-to-disk --auto "$IDISK" $EXTRA; then
+        echo "[selftest] INSTALL PASS"
+        echo "INSTALL TEST PASSED - Gudao Linux installed to $IDISK!"
+    else
+        echo "[selftest] INSTALL FAILED (rc=$?)"
+        echo "[install] last dmesg lines:"
+        dmesg 2>/dev/null | tail -8 | sed 's/^/[install]   /' || true
+    fi
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+    sleep 5
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+fi
+
 # --- CI desktop self-test (kernel cmdline: gudao_desktoptest) ----
 # unpacks the desktop pack, starts Xorg (Mesa CPU rendering) +
 # xfwm4 + xfce4-panel + xfdesktop + thunar + xfce4-terminal,
@@ -470,7 +505,7 @@ echo
 echo "  Welcome to Gudao Linux"
 echo "  Kernel : $(uname -s) $(uname -r)"
 echo "  Shell  : busybox ash   (type 'help' to list all applets)"
-echo "  Extras : calc <expr>  |  about  |  desktop  |  sound-init  |  apt install <pkg>"
+echo "  Extras : calc <expr>  |  about  |  desktop  |  sound-init  |  install-to-disk  |  apt install <pkg>"
 echo "  Network: $NET_LINE"
 echo "  System : live in RAM - nothing persists across reboot"
 echo

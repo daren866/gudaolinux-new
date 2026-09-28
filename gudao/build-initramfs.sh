@@ -111,6 +111,13 @@ if [ ! -x /usr/bin/xfwm4 ]; then
     # application lists are incomplete)
     UDD=/usr/bin/update-desktop-database
     [ -x "$UDD" ] && "$UDD" /usr/share/applications >/dev/null 2>&1 || true
+    # unpack-only mode: 'desktop unpack-only' unpacks the pack and returns
+    # WITHOUT starting X. Used by the install-to-disk command, which needs
+    # the installer tools (sfdisk/mkfs/grub-install) but no desktop.
+    if [ "$1" = "unpack-only" ]; then
+        echo "desktop: unpack-only done (tools ready, X not started)"
+        exit 0
+    fi
 fi
 
 # 2. udev (libinput needs the udev database to find mice/keyboards)
@@ -241,6 +248,24 @@ VICFG
     ) >/var/log/volumeicon.log 2>&1 &
 else
     echo "desktop: WARNING - volumeicon missing from the desktop pack (no volume control)"
+fi
+
+# 5c. 'Install to disk' shortcut on the desktop (file icon). The same
+#     installer is also in the Applications menu (ships with the desktop
+#     pack as /usr/share/applications/install-to-disk.desktop) - the
+#     menu entry does not depend on xfdesktop file-icon settings.
+if [ -x /usr/bin/install-to-disk ] && [ -d /usr/share/applications ]; then
+    mkdir -p /root/Desktop
+    cat > '/root/Desktop/Install to disk.desktop' <<'IDDESK'
+[Desktop Entry]
+Type=Application
+Name=Install to disk
+Comment=Install Gudao Linux onto a hard disk (persistent system)
+Exec=xfce4-terminal -x install-to-disk
+Icon=system-software-install
+Terminal=false
+Categories=System;
+IDDESK
 fi
 
 # 6. verify the panel window is actually mapped on the screen (the process
@@ -375,6 +400,27 @@ chmod 755 "$ROOT/usr/bin/sound-init"
 # guard: the mixer bring-up script MUST exist or every boot stays silent
 test -x "$ROOT/usr/bin/sound-init" \
     || { echo "FAIL: sound-init not generated (mixer would stay muted)"; exit 1; }
+
+# ---- the `install-to-disk` command (persistent disk installer) ----
+# Interactive + scripted installer: partitions the target disk (BIOS: MBR
+# / UEFI: GPT+ESP), copies the complete live root onto it and installs
+# GRUB for $FIRMWARE boot. Lives in the base initramfs so it is ALWAYS
+# available; its tools (sfdisk/mkfs/grub-install) ship in the desktop
+# pack and are unpacked on demand via `desktop unpack-only`.
+cp "$GUDAO_DIR/install-to-disk.sh" "$ROOT/usr/bin/install-to-disk"
+chmod 755 "$ROOT/usr/bin/install-to-disk"
+test -x "$ROOT/usr/bin/install-to-disk" \
+    || { echo "FAIL: install-to-disk missing (no 'Install to disk')"; exit 1; }
+
+# ---- the disk-boot init (PID 1 on installed systems) ----
+# The installed system boots WITHOUT an initramfs: kernel mounts the
+# ext4 root directly (root=PARTUUID=...) and runs /sbin/init-gudao as
+# PID 1. The installer copies /usr/lib/gudao/init-disk to that path.
+mkdir -p "$ROOT/usr/lib/gudao"
+cp "$GUDAO_DIR/init-disk.sh" "$ROOT/usr/lib/gudao/init-disk"
+chmod 755 "$ROOT/usr/lib/gudao/init-disk"
+test -x "$ROOT/usr/lib/gudao/init-disk" \
+    || { echo "FAIL: init-disk template missing (installed system would not boot)"; exit 1; }
 
 # ---- embed the apt pack if it has been built ----
 # (package manager: apt+dpkg unpacked by /init at every boot, see

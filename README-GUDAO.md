@@ -16,6 +16,7 @@ GRUB 引导的混合（BIOS + UEFI）启动 ISO 全部由 GitHub Actions 自动�
 | 网络 | Intel e1000/e1000e 网卡驱动内建；**开机自动 DHCP 分配 IP**，DNS 固定为 `8.8.8.8` |
 | 包管理 | **apt + dpkg 开机即用**，默认源为清华 TUNA（trixie + updates/backports + security），可在运行时安装/卸载软件（装在 RAM，重启后消失） |
 | 桌面 | 输入 `desktop` 一键启动：**Xorg（Mesa llvmpipe CPU 渲染）→ xfwm4 → xfce4-panel → xfdesktop → thunar → xfce4-terminal → volumeicon**；libinput 输入管理 |
+| **安装到硬盘** | **`install-to-disk`（Install to disk）**：把活系统装到硬盘作为**持久系统**（BIOS=MBR+GRUB / UEFI=GPT+ESP），装好后无需 initramfs 直启（`root=PARTUUID` + `init=/sbin/init-gudao`），apt 装的软件重启后保留 |
 | 声音 | QEMU/VMware/VirtualBox 虚拟声卡驱动全内建（Intel HDA、ICH AC97、ES1370/1371）；开机自动解除混音器静音（`sound-init`），面板托盘 **volumeicon** 调音量 |
 | 图形驱动 | 内建：QEMU（bochs/cirrus/virtio-gpu）、VMware（vmwgfx + vmmouse）、VirtualBox（vboxvideo）；VESA fb 兜底 |
 | 引导 | GRUB 2，默认 5 秒菜单；**默认安静 display-only 启动（无内核日志）**，想看日志在菜单手动选 "with kernel log" 项 |
@@ -147,6 +148,39 @@ desktop: loading xfce4-terminal...
   配置错误（QEMU 8+ 无 audiodev 时默认丢弃音频）、VMware/VBox 声卡设置
   未启用或宿主音量静音。
 
+## 安装到硬盘（Install to disk）
+
+活系统（ISO/USB 启动后）自带安装器 **`install-to-disk`**，三个入口等价：
+
+- 控制台直接敲 `install-to-disk`；
+- GUI 桌面：**Applications 菜单 → Install to disk**（或桌面上的 *Install to disk* 图标，会开一个终端跑安装向导）；
+- 脚本/CI：`install-to-disk --auto /dev/sdX`（无任何确认，仅供自动化）。
+
+```text
+# install-to-disk
+  找源介质（挂载你启动用的 ISO/USB，拷内核）
+  -> 选目标盘（>=2GB，列出容量/型号）
+  -> 输入 yes 确认（目标盘会被清空！）
+  -> 分区（BIOS: MBR+ext4 / UEFI: GPT+ESP512M+ext4）
+  -> 复制完整活系统（含本次会话 apt 装过的所有软件）
+  -> 安装 GRUB，写 /boot/grub/grub.cfg
+  -> 重启拔掉 ISO/USB，直接从硬盘引导
+```
+
+装好的系统：
+
+- **持久化**：根分区是真实 ext4，apt 安装、配置修改全部重启保留（活系统仍是 RAM 模式）；
+- **直启**：内核直接挂载根分区（`root=PARTUUID=... init=/sbin/init-gudao`），
+  **不需要 initramfs**，引导链 GRUB → 内核 → `/sbin/init-gudao`（PID 1，
+  负责挂 proc/sys/dev/devpts、DHCP 联网、打印欢迎页）；
+- **图形**：进控制台敲 `desktop` 启动 X 桌面（与活系统一致）；
+- 注意：**UEFI 机器需关闭 Secure Boot**（GRUB EFI 二进制未签名）；
+  内存建议 ≥ 2 GB。
+
+CI 每次构建都会真实验证：QEMU 挂载构建出的 ISO → `install-to-disk --auto`
+装到空白盘 → **脱离 -kernel/-initrd 冷启动该硬盘** → 断言 GRUB/内核/init
+全链路正常。
+
 ## 自动构建
 
 触发方式（任选其一）：
@@ -204,6 +238,8 @@ qemu-system-x86_64 -m 2G -nographic -cdrom GudaoLinux-*.iso
 .github/workflows/build-iso.yml          备用流水线
 gudao/kernel-fragment.config      内核配置片段（键盘/串口/网络/显卡/命名）
 gudao/initramfs-init.sh           initramfs 启动脚本（busybox 终端入口 + CI 自测）
+gudao/install-to-disk.sh          安装到硬盘安装器（Install to disk，持久化安装）
+gudao/init-disk.sh                磁盘系统的 PID 1（装好的系统由它引导，无需 initramfs）
 gudao/build-initramfs.sh          initramfs 组装脚本（含 desktop 启动器生成）
 gudao/build-apt-pack.sh           apt 包管理器构建（apt+dpkg+密钥环+CA证书闭包，TUNA sources.list）
 gudao/build-desktop-pack.sh       桌面包构建（Debian trixie Xorg/XFCE 依赖闭包）

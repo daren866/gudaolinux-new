@@ -68,6 +68,20 @@ PKGS=(
   # slider kills the applet instantly. volumeicon has no meter-assertion
   # logic; its config is a plain keyfile we preseed at session start.
   volumeicon-alsa
+  # disk installer (install-to-disk): partitioning, filesystems and GRUB
+  # for BOTH firmware targets. grub-pc-bin ships the i386-pc modules,
+  # grub-efi-amd64-bin the x86_64-efi ones; the -bin packages carry no
+  # maintainer-script disk prompts (no debconf). util-linux(-extra)/fdisk
+  # provide sfdisk/partx/blkid/wipefs, e2fsprogs mkfs.ext4, dosfstools
+  # mkfs.vfat, grub2-common the grub-install driver.
+  util-linux
+  util-linux-extra
+  fdisk
+  e2fsprogs
+  dosfstools
+  grub2-common
+  grub-pc-bin
+  grub-efi-amd64-bin
   # X diagnostics (xrandr / xwininfo / xdpyinfo)
   x11-utils
   x11-xserver-utils
@@ -135,10 +149,37 @@ test -f "$ROOT/usr/lib/x86_64-linux-gnu/libnotify.so.4" || { echo "FAIL: libnoti
 test -f "$ROOT/usr/lib/x86_64-linux-gnu/xfce4/panel/plugins/libsystray.so" || { echo "FAIL: xfce4-panel systray plugin missing (volumeicon tray icon would never show!)"; exit 1; }
 echo "ALSA userland present (aplay/alsactl/alsa.conf/test wav/init rules)"
 echo "Volume applet present (volumeicon + libnotify4 + panel systray plugin)"
+# disk installer tools (install-to-disk needs all of these on both
+# firmware targets; the pack is also copied onto the installed system)
+test -f "$ROOT/usr/sbin/sfdisk"       || { echo "FAIL: sfdisk missing (installer cannot partition)"; exit 1; }
+test -f "$ROOT/usr/bin/partx"         || { echo "FAIL: partx missing (installer partition re-read; trixie ships it in /usr/bin)"; exit 1; }
+test -f "$ROOT/usr/sbin/blkid"        || { echo "FAIL: blkid missing (installer UUID detection)"; exit 1; }
+test -f "$ROOT/usr/sbin/mkfs.ext4"    || { echo "FAIL: mkfs.ext4 missing (installer cannot format root)"; exit 1; }
+test -f "$ROOT/usr/sbin/mkfs.vfat"    || { echo "FAIL: mkfs.vfat missing (installer cannot format the UEFI ESP)"; exit 1; }
+test -f "$ROOT/usr/sbin/grub-install" || { echo "FAIL: grub-install missing (installer cannot install the bootloader)"; exit 1; }
+test -f "$ROOT/usr/lib/grub/i386-pc/boot.img"   || { echo "FAIL: grub i386-pc modules missing (BIOS install broken)"; exit 1; }
+test -f "$ROOT/usr/lib/grub/x86_64-efi/ext2.mod" || { echo "FAIL: grub x86_64-efi modules missing (UEFI install broken)"; exit 1; }
+echo "Disk installer tools present (sfdisk/partx/blkid/mkfs.ext4/mkfs.vfat/grub-install + BIOS/UEFI modules)"
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/dri/ || true
 ls "$ROOT"/usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1 && echo "LLVM (llvmpipe backend) present"
 ls "$ROOT"/usr/share/X11/xkb >/dev/null 2>&1 && echo "xkb data present"
 ls "$ROOT"/usr/bin/update-desktop-database >/dev/null 2>&1 && echo "desktop-file-utils present"
+
+echo ">>> shipping the 'Install to disk' Applications menu entry"
+mkdir -p "$ROOT/usr/share/applications"
+cat > "$ROOT/usr/share/applications/install-to-disk.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Install to disk
+Comment=Install Gudao Linux onto a hard disk (persistent system)
+Exec=xfce4-terminal -x install-to-disk
+Icon=system-software-install
+Terminal=false
+Categories=System;
+EOF
+test -f "$ROOT/usr/share/applications/install-to-disk.desktop" \
+    || { echo "FAIL: install-to-disk.desktop menu entry missing"; exit 1; }
+echo "'Install to disk' menu entry present"
 
 echo ">>> merged-usr staging checks (base-files must have extracted first)"
 # the desktop closure contains base-files which ships the four usrmerge
