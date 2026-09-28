@@ -71,7 +71,7 @@ jobs:
           # modules); catches typo'd symbol names silently dropped by olddefconfig.
           # UNIX98_PTYS: without it there is no /dev/ptmx and VTE terminals
           # (xfce4-terminal) fail with "Failed to open PTY"
-          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y SOUND=y SND=y SND_PCI=y SND_HDA_INTEL=y SND_HDA_GENERIC=y SND_AC97_CODEC=y SND_INTEL8X0=y SND_ENS1370=y SND_ENS1371=y SCSI=y BLK_DEV_SD=y BLK_DEV_SR=y ATA=y ATA_PIIX=y SATA_AHCI=y VIRTIO_PCI=y VIRTIO_BLK=y BLK_DEV_NVME=y USB_STORAGE=y VFAT_FS=y NLS_CP437=y NLS_ISO8859_1=y MSDOS_PARTITION=y EFI_PARTITION=y; do
+          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y SOUND=y SND=y SND_PCI=y SND_HDA_INTEL=y SND_HDA_GENERIC=y SND_AC97_CODEC=y SND_INTEL8X0=y SND_ENS1370=y SND_ENS1371=y SCSI=y BLK_DEV_SD=y BLK_DEV_SR=y ATA=y ATA_PIIX=y SATA_AHCI=y VIRTIO_PCI=y VIRTIO_BLK=y BLK_DEV_NVME=y USB_STORAGE=y VFAT_FS=y NLS_CODEPAGE_437=y NLS_ISO8859_1=y MSDOS_PARTITION=y EFI_PARTITION=y; do
             grep -q "^CONFIG_$sym" .config || { echo "CONFIG_$sym missing! (typo or symbol removed from kernel?)"; exit 1; }
           done
 
