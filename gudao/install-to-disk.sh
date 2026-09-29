@@ -57,7 +57,9 @@ Options:
 
 The installer:
   1. finds the source medium (the ISO/USB the system booted from) to
-     copy the kernel image from - QEMU: attach the ISO as -cdrom
+     copy the kernel image from: CD-ROM, dd'ed USB stick, a FAT/ext4
+     stick with the ISO contents, an ISO file on a disk (Ventoy), or
+     /boot of a running installed system - QEMU: attach the ISO as -cdrom
   2. partitions the target disk (BIOS: MBR+ext4 / UEFI: GPT+ESP+ext4)
   3. formats it and copies the complete live system (base + apt pack +
      desktop pack as currently unpacked) onto the root partition
@@ -125,45 +127,138 @@ say "target system: persistent (survives reboot), boots without initramfs"
 # find the source medium (needs /boot/vmlinuz-gudao)
 # ------------------------------------------------------------
 SRC_KERNEL=""
-if [ -n "$GUDAO_SOURCE_DIR" ] && [ -f "$GUDAO_SOURCE_DIR/boot/vmlinuz-gudao" ]; then
-    SRC_KERNEL="$GUDAO_SOURCE_DIR/boot/vmlinuz-gudao"
-    say "source: GUDAO_SOURCE_DIR=$GUDAO_SOURCE_DIR"
-else
-    mkdir -p "$SRC"
-    # try: CD-ROMs first (QEMU -cdrom / real DVD), then whole disks and
-    # partitions (dd'ed isohybrid USB sticks)
-    CANDS="/dev/sr0 /dev/sr1"
-    for d in /sys/block/*; do
-        dev="${d##*/}"
-        case "$dev" in
-            loop*|ram*|zram*|fd*|md*|dm-*|nbd*|sr*) continue ;;
-        esac
-        [ -e "/dev/$dev" ] && CANDS="$CANDS /dev/$dev"
-        for p in "$d"/*[0-9]; do
-            [ -e "$p" ] || continue
-            CANDS="$CANDS /dev/${p##*/}"
-        done
-    done
-    for c in $CANDS; do
-        [ -b "$c" ] || continue
-        # NOTE: use busybox mount, NOT the real util-linux mount: the
-        # live root is the initramfs (mounted MS_NOSUID), so util-linux's
-        # suid mount cannot take effect and refuses with "must be
-        # superuser" even as root; busybox mount needs no suid bit
-        if $B mount -t iso9660 -o ro "$c" "$SRC" 2>/dev/null; then
+SRC_DEV=""          # device the source was found on (excluded from targets)
+SRC_DEV2=""         # extra mount to clean up (iso-scan loop mount)
+
+# try_source DEV FS...: mount DEV read-only at $SRC trying each fs type
+# and check the Gudao marker; on success leaves it mounted, returns 0.
+# NOTE: use busybox mount, NOT the real util-linux mount: the live root
+# is the initramfs (mounted MS_NOSUID), so util-linux's suid mount
+# cannot take effect and refuses with "must be superuser" even as root;
+# busybox mount needs no suid bit.
+try_source() {
+    _dev="$1"; shift
+    for _fs in "$@"; do
+        if $B mount -t "$_fs" -o ro "$_dev" "$SRC" 2>/dev/null; then
             if [ -f "$SRC/boot/vmlinuz-gudao" ]; then
-                SRC_KERNEL="$SRC/boot/vmlinuz-gudao"
-                say "source medium: $c mounted at $SRC"
-                break
+                return 0
             fi
             $B umount "$SRC" 2>/dev/null || true
         fi
     done
+    return 1
+}
+
+# block-device candidates: CD/DVD drives first, then whole disks and
+# their partitions (dd'ed isohybrid sticks, ISOs attached as disks)
+CANDS=""
+for d in /sys/block/*; do
+    dev="${d##*/}"
+    case "$dev" in sr*) [ -b "/dev/$dev" ] && CANDS="$CANDS /dev/$dev" ;; esac
+done
+for d in /sys/block/*; do
+    dev="${d##*/}"
+    case "$dev" in
+        loop*|ram*|zram*|fd*|md*|dm-*|nbd*|sr*) continue ;;
+    esac
+    [ -e "/dev/$dev" ] && CANDS="$CANDS /dev/$dev"
+    for p in "$d"/*[0-9]; do
+        [ -e "$p" ] || continue
+        CANDS="$CANDS /dev/${p##*/}"
+    done
+done
+
+if [ -n "$GUDAO_SOURCE_DIR" ] && [ -f "$GUDAO_SOURCE_DIR/boot/vmlinuz-gudao" ]; then
+    SRC_KERNEL="$GUDAO_SOURCE_DIR/boot/vmlinuz-gudao"
+    say "source: GUDAO_SOURCE_DIR=$GUDAO_SOURCE_DIR"
+else
+    mkdir -p "$SRC" /mnt/gudao-isoloop
+    say "scanning for the Gudao source medium (ISO/USB)..."
+
+    # 1) an already-mounted medium (the user mounted the ISO, or a boot
+    #    flow that keeps the boot medium mounted) - /proc/mounts rows
+    #    with a real device in field 1
+    for _m in $(awk '$1 ~ /^\// {print $2}' /proc/mounts 2>/dev/null); do
+        [ -f "$_m/boot/vmlinuz-gudao" ] || continue
+        SRC_KERNEL="$_m/boot/vmlinuz-gudao"
+        say "source: already-mounted medium at $_m"
+        break
+    done
+
+    # 2) device scan: iso9660 (ISO/DVD/dd'ed isohybrid stick), then vfat
+    #    and ext4 (a stick with the ISO CONTENTS copied onto it)
+    if [ -z "$SRC_KERNEL" ]; then
+        for c in $CANDS; do
+            [ -b "$c" ] || continue
+            if try_source "$c" iso9660 vfat ext4; then
+                SRC_KERNEL="$SRC/boot/vmlinuz-gudao"
+                SRC_DEV="$c"
+                say "source medium: $c mounted at $SRC"
+                break
+            fi
+        done
+    fi
+
+    # 3) iso-scan: the ISO FILE lying on a partition (Ventoy-style
+    #    sticks, an ISO kept on the disk). Loop-mount every *.iso
+    #    bigger than 100 MB and check the marker (needs CONFIG_BLK_DEV_LOOP).
+    if [ -z "$SRC_KERNEL" ]; then
+        for c in $CANDS; do
+            [ -b "$c" ] || continue
+            case "$c" in "$SRC_DEV") continue ;; esac
+            for fs in vfat ext4 exfat iso9660; do
+                $B umount "$SRC" 2>/dev/null || true
+                $B mount -t "$fs" -o ro "$c" "$SRC" 2>/dev/null || continue
+                for isofile in "$SRC"/*.iso "$SRC"/*.ISO; do
+                    [ -f "$isofile" ] || continue
+                    size_kb=$(( $(wc -c < "$isofile" 2>/dev/null || echo 0) / 1024 ))
+                    [ "$size_kb" -lt 100000 ] && continue
+                    if $B mount -o loop -t iso9660 "$isofile" /mnt/gudao-isoloop 2>/dev/null; then
+                        if [ -f /mnt/gudao-isoloop/boot/vmlinuz-gudao ]; then
+                            SRC_KERNEL=/mnt/gudao-isoloop/boot/vmlinuz-gudao
+                            SRC_DEV="$c"
+                            SRC_DEV2=/mnt/gudao-isoloop
+                            say "source: $isofile (on $c) loop-mounted"
+                            break 2
+                        fi
+                        $B umount /mnt/gudao-isoloop 2>/dev/null || true
+                    fi
+                done
+                [ -n "$SRC_KERNEL" ] && break
+            done
+        done
+        [ -n "$SRC_KERNEL" ] || $B umount "$SRC" 2>/dev/null || true
+    fi
+
+    # 4) still nothing: this may be an INSTALLED system being
+    #    re-installed/repaired - take the kernel from the running root
+    if [ -z "$SRC_KERNEL" ] && [ -f /boot/vmlinuz-gudao ]; then
+        SRC_KERNEL=/boot/vmlinuz-gudao
+        say "source: /boot/vmlinuz-gudao of the RUNNING system (installed-system reinstall)"
+    fi
+
+    # 5) nothing found anywhere: diagnostic dump, then die
+    if [ -z "$SRC_KERNEL" ]; then
+        echo "install-to-disk: SOURCE SCAN FAILED - block devices seen:" >&2
+        for d in /sys/block/*; do
+            dev="${d##*/}"
+            case "$dev" in loop*|ram*|zram*) continue ;; esac
+            sz512="$(cat "$d/size" 2>/dev/null || echo 0)"
+            mb=$(( sz512 / 2048 ))
+            echo "  /dev/$dev  ${mb} MB  $([ -b "/dev/$dev" ] && echo '(node ok)' || echo '(NO /dev NODE - driver missing?)')" >&2
+        done
+        echo "  cmdline: $(cat /proc/cmdline 2>/dev/null)" >&2
+        die "no Gudao source medium found.
+  The installer copies the kernel image from the medium the system
+  booted from, so a Gudao ISO/USB must be visible to the machine.
+  Fixes:
+    QEMU          add:  -cdrom gudao-linux-*.iso   (then reboot the VM)
+    real machine  boot the Gudao USB stick / DVD
+    advanced      export GUDAO_SOURCE_DIR=<dir containing
+                  boot/vmlinuz-gudao> and re-run install-to-disk"
+    fi
 fi
-[ -n "$SRC_KERNEL" ] || die "no Gudao source medium found.
-  Boot the Gudao ISO (QEMU: -cdrom gudao-linux-*.iso) or dd it to a USB
-  stick, then re-run install-to-disk. (Or export GUDAO_SOURCE_DIR to a
-  directory containing boot/vmlinuz-gudao.)"
+[ -n "$SRC_KERNEL" ] || die "internal error: source scan ended without a source"
 say "source kernel: $SRC_KERNEL"
 
 # ------------------------------------------------------------
@@ -214,9 +309,35 @@ part_of() {
     esac
 }
 
+# disks that must NEVER be offered as targets:
+#   SRC_DISK - the medium the source kernel came from (a dd'ed USB stick
+#              is a perfectly sized "target" and would destroy the boot
+#              medium mid-install)
+#   RUN_DISK - the disk the RUNNING system itself boots from (an
+#              installed-system reinstall must not eat its own root)
+#              resolved from root= in /proc/cmdline (PARTUUID against
+#              the partition uevents, or a plain /dev path)
+RUN_DISK=""
+for w in $(cat /proc/cmdline 2>/dev/null); do
+    case "$w" in
+        root=PARTUUID=*)
+            _pu="${w#root=PARTUUID=}"
+            for pue in /sys/block/*/*/uevent; do
+                [ -f "$pue" ] || continue
+                grep -q "^PARTUUID=$_pu\$" "$pue" 2>/dev/null || continue
+                _pn="${pue%/*}"; _pn="${_pn##*/}"       # partition (sda2)
+                _dn="${pue%/*/*}"; _dn="${_dn##*/}"     # disk     (sda)
+                RUN_DISK="/dev/$_dn"
+                break
+            done
+            ;;
+        root=/dev/*) RUN_DISK="/dev/$(src_disk "${w#root=/dev/}")" ;;
+    esac
+    [ -n "$RUN_DISK" ] && break
+done
 SRC_DISK=""
-[ -n "$GUDAO_SOURCE_DIR" ] || SRC_DISK="/dev/$(src_disk "${SRC##*/}")"
-say "source disk (excluded from targets): ${SRC_DISK:-none}"
+[ -n "$SRC_DEV" ] && SRC_DISK="/dev/$(src_disk "${SRC_DEV##*/}")"
+say "excluded from targets: source=${SRC_DISK:-none} running-root=${RUN_DISK:-none}"
 
 disk_list=""
 i=0
@@ -227,6 +348,7 @@ for d in /sys/block/*; do
     esac
     [ -b "/dev/$dev" ] || continue
     [ "/dev/$dev" = "$SRC_DISK" ] && continue
+    [ "/dev/$dev" = "$RUN_DISK" ] && continue
     sz512="$(cat "$d/size" 2>/dev/null || echo 0)"
     mb=$(( sz512 / 2048 ))
     [ "$mb" -lt 1900 ] && continue   # need room for the system copy
@@ -509,6 +631,7 @@ if [ "$FIRMWARE" = "uefi" ]; then
 fi
 $B umount "$TGT" || die "cannot unmount $TGT (something still holds it open)"
 [ -n "$GUDAO_SOURCE_DIR" ] || $B umount "$SRC" 2>/dev/null || true
+[ -n "$SRC_DEV2" ] && $B umount "$SRC_DEV2" 2>/dev/null || true
 $B sync
 
 echo

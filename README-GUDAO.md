@@ -177,9 +177,33 @@ desktop: loading xfce4-terminal...
 - 注意：**UEFI 机器需关闭 Secure Boot**（GRUB EFI 二进制未签名）；
   内存建议 ≥ 2 GB。
 
+### 源介质检测（报 "no Gudao source medium found" 时看这里）
+
+安装器需要从启动介质里拷内核镜像，按以下顺序自动探测：
+
+1. `GUDAO_SOURCE_DIR` 环境变量（指向含 `boot/vmlinuz-gudao` 的目录）；
+2. 已挂载的介质（自己 mount 过 ISO 的情况）；
+3. 块设备扫描（光驱优先，其次整盘与分区）：iso9660（ISO/DVD/dd 直写的
+   isohybrid U盘）→ vfat/ext4（把 ISO **内容**拷进 U盘的 Rufus 文件复制式）；
+4. ISO 文件扫描（Ventoy 场景）：在 vfat/ext4/exFAT 分区上找 *.iso 自动 loop 挂载；
+5. 已安装系统的 `/boot/vmlinuz-gudao`（重装/修复场景）。
+
+全部失败时安装器会打印**检测到的块设备清单 + cmdline** 再退出，方便定位。
+常见原因：
+
+- **QEMU 启动时没挂 ISO**（例如只用 `-kernel/-initrd` 直启）：加上
+  `-cdrom gudao-linux-*.iso` 重启 VM 再装；
+- virt-manager/Ventoy 等特殊引导：确认 ISO 对 VM 可见，或改用上面的探测
+  路径之一；
+- 高级用法：`export GUDAO_SOURCE_DIR=/路径` 后重跑。
+
+另外安装器**永不**把以下盘列为目标：源介质所在盘、运行中系统的根盘
+（重装不会吃掉自己）。
+
 CI 每次构建都会真实验证：QEMU 挂载构建出的 ISO → `install-to-disk --auto`
 装到空白盘 → **脱离 -kernel/-initrd 冷启动该硬盘** → 断言 GRUB/内核/init
-全链路正常。
+全链路正常；另测 **无光驱 + vfat U盘作源** 的完整安装，与**无任何源**时
+的诊断输出。
 
 ## 自动构建
 

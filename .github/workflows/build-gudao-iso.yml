@@ -62,7 +62,7 @@ jobs:
           echo "==> sound config check (HDA + AC97 + Ensoniq for QEMU/VBox/VMware):"
           grep -E 'CONFIG_(SND=|SND_HDA_INTEL=|SND_HDA_GENERIC=|SND_INTEL8X0=|SND_AC97_CODEC=|SND_ENS1370=|SND_ENS1371=)' .config || true
           echo "==> disk installer config check (CD-ROM + installable disks + ESP vfat):"
-          grep -E 'CONFIG_(SCSI=|BLK_DEV_SD=|BLK_DEV_SR=|ATA_PIIX=|SATA_AHCI=|VIRTIO_BLK=|BLK_DEV_NVME=|USB_STORAGE=|VFAT_FS=|NLS_CP437=|EXT4_FS=|ISO9660_FS=|MSDOS_PARTITION=|EFI_PARTITION=)' .config || true
+          grep -E 'CONFIG_(SCSI=|BLK_DEV_SD=|BLK_DEV_SR=|ATA_PIIX=|SATA_AHCI=|VIRTIO_BLK=|SCSI_VIRTIO=|BLK_DEV_LOOP=|BLK_DEV_NVME=|USB_STORAGE=|VFAT_FS=|EXFAT_FS=|NLS_UTF8=|EXT4_FS=|ISO9660_FS=|MSDOS_PARTITION=|EFI_PARTITION=)' .config || true
           # fail the build if e1000 is not built-in (initramfs ships no modules)
           grep -q '^CONFIG_E1000=y' .config || { echo 'CONFIG_E1000=y missing!'; exit 1; }
           echo "==> graphics config check (KMS drivers + firmware fb fallback):"
@@ -71,7 +71,7 @@ jobs:
           # modules); catches typo'd symbol names silently dropped by olddefconfig.
           # UNIX98_PTYS: without it there is no /dev/ptmx and VTE terminals
           # (xfce4-terminal) fail with "Failed to open PTY"
-          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y SOUND=y SND=y SND_PCI=y SND_HDA_INTEL=y SND_HDA_GENERIC=y SND_AC97_CODEC=y SND_INTEL8X0=y SND_ENS1370=y SND_ENS1371=y SCSI=y BLK_DEV_SD=y BLK_DEV_SR=y ATA=y ATA_PIIX=y SATA_AHCI=y VIRTIO_PCI=y VIRTIO_BLK=y BLK_DEV_NVME=y USB_STORAGE=y VFAT_FS=y NLS_CODEPAGE_437=y NLS_ISO8859_1=y MSDOS_PARTITION=y EFI_PARTITION=y; do
+          for sym in DRM=y DRM_BOCHS=y DRM_CIRRUS_QEMU=y DRM_QXL=y DRM_VIRTIO_GPU=y DRM_VMWGFX=y DRM_VBOXVIDEO=y DRM_SIMPLEDRM=y SYSFB_SIMPLEFB=y FB_VESA=y FRAMEBUFFER_CONSOLE=y UNIX98_PTYS=y SOUND=y SND=y SND_PCI=y SND_HDA_INTEL=y SND_HDA_GENERIC=y SND_AC97_CODEC=y SND_INTEL8X0=y SND_ENS1370=y SND_ENS1371=y SCSI=y BLK_DEV_SD=y BLK_DEV_SR=y ATA=y ATA_PIIX=y SATA_AHCI=y VIRTIO_PCI=y VIRTIO_BLK=y SCSI_VIRTIO=y BLK_DEV_LOOP=y BLK_DEV_NVME=y USB_STORAGE=y USB_UAS=y VFAT_FS=y EXFAT_FS=y NLS_CODEPAGE_437=y NLS_ISO8859_1=y NLS_UTF8=y MSDOS_PARTITION=y EFI_PARTITION=y; do
             grep -q "^CONFIG_$sym" .config || { echo "CONFIG_$sym missing! (typo or symbol removed from kernel?)"; exit 1; }
           done
 
@@ -327,6 +327,69 @@ jobs:
             echo " DISK BOOT TEST FAILED"
             exit 1
           fi
+
+      - name: 'Install-to-disk source-fallback test (vfat stick as source, NO CD-ROM)'
+        run: |
+          # The user-facing bug: "no Gudao source medium found" whenever no
+          # CD-ROM carries the ISO. Simulates a Rufus-style stick: a FAT
+          # filesystem holding the ISO CONTENTS (here boot/vmlinuz-gudao)
+          # attached as a virtio disk, with NO -cdrom at all. The installer
+          # must find the source on the stick (vfat branch of the scan),
+          # exclude the stick from the targets and complete the install.
+          command -v mkfs.vfat >/dev/null 2>&1 || sudo apt-get install -y dosfstools
+          truncate -s 64M srcstick.raw
+          mkfs.vfat -F 32 srcstick.raw
+          sudo mkdir -p /mnt/stick && sudo mount -o loop srcstick.raw /mnt/stick
+          sudo mkdir -p /mnt/stick/boot && sudo cp vmlinuz-gudao /mnt/stick/boot/
+          sudo umount /mnt/stick
+          truncate -s 4G install-disk2.raw
+          set +e
+          timeout 900 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
+            -drive file=srcstick.raw,format=raw,if=virtio \
+            -drive file=install-disk2.raw,format=raw \
+            -device e1000,netdev=net0 -netdev user,id=net0 \
+            -kernel vmlinuz-gudao \
+            -initrd initramfs-gudao.img \
+            -append "console=ttyS0 gudao_installtest=/dev/sda gudao_install_serial panic=-1" \
+            </dev/null > install-src.log 2>&1
+          RC=$?
+          set -e
+          echo "qemu exit code: $RC"
+          tail -60 install-src.log
+          grep -q "source medium: /dev/" install-src.log \
+            || { echo " SOURCE DETECTION (vfat stick) FAILED"; exit 1; }
+          if grep -q "INSTALL TEST PASSED" install-src.log; then
+            echo "=============================================="
+            echo " SOURCE-FALLBACK INSTALL PASSED (vfat stick, no CD-ROM)"
+            echo "=============================================="
+          else
+            echo " SOURCE-FALLBACK INSTALL FAILED"
+            exit 1
+          fi
+
+      - name: 'Install-to-disk diagnostic test (no source medium at all)'
+        run: |
+          # Guards the failure path: with NO Gudao medium attached the
+          # installer must fail with the SOURCE SCAN diagnostic (device
+          # list + cmdline) so user reports stay actionable.
+          truncate -s 4G empty.raw
+          set +e
+          timeout 240 qemu-system-x86_64 -m 2048M -nographic -no-reboot \
+            -drive file=empty.raw,format=raw \
+            -device e1000,netdev=net0 -netdev user,id=net0 \
+            -kernel vmlinuz-gudao \
+            -initrd initramfs-gudao.img \
+            -append "console=ttyS0 gudao_installtest=/dev/sda gudao_install_serial panic=-1" \
+            </dev/null > install-nosrc.log 2>&1
+          RC=$?
+          set -e
+          echo "qemu exit code: $RC"
+          tail -40 install-nosrc.log
+          grep -q "no Gudao source medium found" install-nosrc.log \
+            && grep -q "SOURCE SCAN FAILED" install-nosrc.log \
+            && grep -q "/dev/sda" install-nosrc.log \
+            || { echo " NO-SOURCE DIAGNOSTIC FAILED"; exit 1; }
+          echo " NO-SOURCE DIAGNOSTIC PASSED (device listing present)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
